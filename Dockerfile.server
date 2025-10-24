@@ -13,7 +13,17 @@ FROM base AS dev
 COPY package.json bun.lock* ./
 COPY . .
 RUN bun install --no-save
-EXPOSE 3001
+
+# Install system dependencies for Prisma
+RUN apk add --no-cache curl
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Generate Prisma client
+RUN bun run db:generate
+
+EXPOSE 10000
 CMD ["bun", "--watch", "server/index.ts"]
 
 # Production build
@@ -39,6 +49,6 @@ RUN addgroup -g 1001 -S bunuser && \
 
 USER bunuser
 
-EXPOSE 3001
+EXPOSE 10000
 
 CMD ["bun", "server/index.ts"]

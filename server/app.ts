@@ -1,5 +1,6 @@
 import Fastify, { FastifyInstance } from 'fastify'
 import { config } from './config'
+import { connectDatabase, disconnectDatabase } from '../lib/database.js'
 
 // Plugins
 import corsPlugin from './plugins/cors'
@@ -11,6 +12,8 @@ import agentsRoutes from './routes/agents'
 import orchestratorRoutes from './routes/orchestrator'
 import uploadRoutes from './routes/upload'
 import paymentRoutes from './routes/payments'
+import tasksRoutes from './routes/tasks'
+import auditRoutes from './routes/audit'
 
 export async function buildApp(): Promise<FastifyInstance> {
   const fastify = Fastify({
@@ -30,6 +33,14 @@ export async function buildApp(): Promise<FastifyInstance> {
         },
   })
 
+  // Connect to database
+  try {
+    await connectDatabase()
+  } catch (error) {
+    fastify.log.error('Failed to connect to database:', error)
+    throw error
+  }
+
   // Register plugins
   await fastify.register(corsPlugin)
   await fastify.register(helmetPlugin)
@@ -37,7 +48,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Health check
   fastify.get('/health', async () => {
-    return { status: 'ok', timestamp: Date.now() }
+    return { 
+      status: 'ok', 
+      timestamp: Date.now(),
+      database: 'connected',
+      hedera: config.hedera.network,
+    }
   })
 
   // Register routes
@@ -45,6 +61,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(orchestratorRoutes, { prefix: '/api/orchestrator' })
   await fastify.register(uploadRoutes, { prefix: '/api/upload' })
   await fastify.register(paymentRoutes, { prefix: '/api/payments' })
+  await fastify.register(tasksRoutes, { prefix: '/api/tasks' })
+  await fastify.register(auditRoutes, { prefix: '/api/audit' })
+
+  // Graceful shutdown
+  fastify.addHook('onClose', async () => {
+    await disconnectDatabase()
+  })
 
   return fastify
 }

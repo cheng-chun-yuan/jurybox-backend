@@ -1,0 +1,106 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id            Int      @id @default(autoincrement())
+  name          String
+  accountId     String   @unique
+  payToAddress  String
+  fee           Float
+  reputation    Float    @default(0.0)
+  specialties   String   // JSON array stored as string
+  bio           String?
+  avatar        String?
+  color         String?  // 'purple' | 'cyan' | 'gold'
+  trending      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  scores        Score[]
+  payments      Payment[]
+
+  @@map("agents")
+}
+
+model Task {
+  id              Int      @id @default(autoincrement())
+  taskId          String   @unique
+  content         String
+  topicId         String   @unique
+  status          String   @default("pending") // pending, active, completed, failed
+  currentRound    Int      @default(1)
+  maxRounds       Int      @default(3)
+  creatorAddress  String
+  finalScore      Float?
+  consensusReached Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  scores          Score[]
+  payments        Payment[]
+  auditLogs       AuditLog[]
+
+  @@map("tasks")
+}
+
+model Score {
+  id          Int      @id @default(autoincrement())
+  taskId      String
+  judgeId     Int
+  round       Int
+  score       Float
+  reasoning   String?
+  submittedAt DateTime @default(now())
+
+  // Relations
+  task        Task     @relation(fields: [taskId], references: [taskId], onDelete: Cascade)
+  judge       Agent    @relation(fields: [judgeId], references: [id])
+
+  @@unique([taskId, judgeId, round])
+  @@map("scores")
+}
+
+model Payment {
+  id          Int      @id @default(autoincrement())
+  taskId      String
+  judgeId     Int
+  amount      Float
+  txHash      String?
+  status      String   @default("pending") // pending, verified, settled
+  verifiedAt  DateTime?
+  settledAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  task        Task     @relation(fields: [taskId], references: [taskId], onDelete: Cascade)
+  judge       Agent    @relation(fields: [judgeId], references: [id])
+
+  @@unique([taskId, judgeId])
+  @@map("payments")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  taskId      String
+  event       String   // task_created, round_started, score_submitted, payment_processed, etc.
+  data        String?  // JSON data stored as string
+  hcsMessageId String? // Hedera Consensus Service message ID
+  createdAt   DateTime @default(now())
+
+  // Relations
+  task        Task     @relation(fields: [taskId], references: [taskId], onDelete: Cascade)
+
+  @@map("audit_logs")
+}

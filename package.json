@@ -8,6 +8,11 @@
     "dev": "bun --watch server/index.ts",
     "start": "bun server/index.ts",
     "build": "echo 'No build needed for Bun'",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed": "bun prisma/seed.ts",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
@@ -29,9 +34,11 @@
     "@hashgraph/sdk": "^2.75.0",
     "@langchain/core": "^1.0.1",
     "@langchain/openai": "^1.0.0",
+    "@prisma/client": "^5.7.1",
     "a2a-x402": "^0.0.3",
+    "better-sqlite3": "^9.2.2",
     "dotenv": "^17.2.3",
-    "ethers": "^6.15.0",
+    "ethers": "^6.13.4",
     "fastify": "^5.6.1",
     "fastify-plugin": "^5.1.0",
     "hedera-agent-kit": "^3.4.0",
@@ -42,8 +49,10 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^22",
     "concurrently": "^9.2.1",
+    "prisma": "^5.7.1",
     "typescript": "^5"
   },
   "engines": {

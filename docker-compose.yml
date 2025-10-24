@@ -7,33 +7,43 @@ services:
       target: dev
     container_name: jurybox-fastify
     ports:
-      - "3001:3001"
+      - "10000:10000"
     environment:
       - NODE_ENV=development
       - FASTIFY_HOST=0.0.0.0
-      - FASTIFY_PORT=3001
+      - FASTIFY_PORT=10000
       - CORS_ORIGIN=http://localhost:3000
       - LOG_LEVEL=info
+      # Database Configuration
+      - DATABASE_URL=file:/app/data/dev.db
       # Hedera Configuration
       - HEDERA_ACCOUNT_ID=${HEDERA_ACCOUNT_ID}
       - HEDERA_PRIVATE_KEY=${HEDERA_PRIVATE_KEY}
       - HEDERA_NETWORK=${HEDERA_NETWORK}
+      # Creator Configuration
+      - CREATOR_PRIVATE_KEY=${CREATOR_PRIVATE_KEY}
       # Pinata IPFS Configuration
       - PINATA_API_KEY=${PINATA_API_KEY}
       - PINATA_API_SECRET=${PINATA_API_SECRET}
       # AI Model Provider
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # X402 Payment Configuration
+      - X402_DEBUG=true
+      - X402_FACILITATOR_URL=https://x402.org/facilitator
+      - X402_FACILITATOR_API_KEY=${X402_FACILITATOR_API_KEY}
       # Application
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
     volumes:
       - ./server:/app/server
       - ./lib:/app/lib
       - ./types:/app/types
+      - ./prisma:/app/prisma
+      - ./data:/app/data
       - /app/node_modules
     networks:
       - jurybox-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -46,7 +56,7 @@ services:
     restart: unless-stopped
     command:
       - "http"
-      - "fastify-server:3001"
+      - "fastify-server:10000"
       - "--log=stdout"
     environment:
       # Add your ngrok authtoken here or via .env

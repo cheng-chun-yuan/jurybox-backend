@@ -30,7 +30,7 @@ JuryBox Backend is a high-performance Fastify-based API that provides multi-agen
 - **X402 Payments**: Payment processing for agent services
 
 ### Base URL
-- **Local Development**: `http://localhost:3001`
+- **Local Development**: `http://localhost:10000`
 - **Production**: `https://your-domain.com`
 
 ## 🚀 Getting Started
@@ -63,7 +63,7 @@ Currently, the API uses API keys for authentication. Include your API key in the
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
      -H "Content-Type: application/json" \
-     http://localhost:3001/api/agents/register
+     http://localhost:10000/api/agents/register
 ```
 
 ## 📡 API Endpoints
@@ -83,7 +83,7 @@ Check if the API is running and healthy.
 
 **Example:**
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:10000/health
 ```
 
 ---
@@ -136,7 +136,7 @@ Register a new AI agent in the system.
 
 **Example:**
 ```bash
-curl -X POST http://localhost:3001/api/agents/register \
+curl -X POST http://localhost:10000/api/agents/register \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Expert Evaluator",
@@ -421,7 +421,7 @@ Upload a file to IPFS via Pinata.
 
 **Example:**
 ```bash
-curl -X POST http://localhost:3001/api/upload \
+curl -X POST http://localhost:10000/api/upload \
   -F "file=@document.pdf" \
   -F 'metadata={"title":"Sample Document","description":"Test upload"}'
 ```
@@ -763,7 +763,7 @@ X-RateLimit-Reset: 1640995260
 
 ```bash
 # 1. Register agents
-curl -X POST http://localhost:3001/api/agents/register \
+curl -X POST http://localhost:10000/api/agents/register \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Code Reviewer",
@@ -776,7 +776,7 @@ curl -X POST http://localhost:3001/api/agents/register \
   }'
 
 # 2. Create orchestrator
-curl -X POST http://localhost:3001/api/orchestrator/create \
+curl -X POST http://localhost:10000/api/orchestrator/create \
   -H "Content-Type: application/json" \
   -d '{
     "judgeIds": ["agent_1234567890"],
@@ -787,7 +787,7 @@ curl -X POST http://localhost:3001/api/orchestrator/create \
   }'
 
 # 3. Execute evaluation
-curl -X POST http://localhost:3001/api/orchestrator/orch_1234567890/evaluate \
+curl -X POST http://localhost:10000/api/orchestrator/orch_1234567890/evaluate \
   -H "Content-Type: application/json" \
   -d '{
     "content": "function add(a, b) { return a + b; }",
@@ -803,12 +803,12 @@ curl -X POST http://localhost:3001/api/orchestrator/orch_1234567890/evaluate \
 
 ```bash
 # 1. Upload file
-curl -X POST http://localhost:3001/api/upload \
+curl -X POST http://localhost:10000/api/upload \
   -F "file=@code.js" \
   -F 'metadata={"title":"Sample Code","language":"javascript"}'
 
 # 2. Use file in evaluation
-curl -X POST http://localhost:3001/api/orchestrator/orch_1234567890/evaluate \
+curl -X POST http://localhost:10000/api/orchestrator/orch_1234567890/evaluate \
   -H "Content-Type: application/json" \
   -d '{
     "content": "QmXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXx",
@@ -824,7 +824,7 @@ curl -X POST http://localhost:3001/api/orchestrator/orch_1234567890/evaluate \
 
 ```bash
 # 1. Request payment for premium service
-curl -X POST http://localhost:3001/api/payments/request \
+curl -X POST http://localhost:10000/api/payments/request \
   -H "Content-Type: application/json" \
   -d '{
     "amount": 5.0,
@@ -839,7 +839,7 @@ curl -X POST http://localhost:3001/api/payments/request \
   }'
 
 # 2. Process payment (client-side with private key)
-curl -X POST http://localhost:3001/api/payments/process \
+curl -X POST http://localhost:10000/api/payments/process \
   -H "Content-Type: application/json" \
   -d '{
     "privateKey": "0x1234567890abcdef...",
@@ -859,7 +859,7 @@ curl -X POST http://localhost:3001/api/payments/process \
   }'
 
 # 3. Verify payment
-curl -X POST http://localhost:3001/api/payments/verify \
+curl -X POST http://localhost:10000/api/payments/verify \
   -H "Content-Type: application/json" \
   -d '{
     "paymentPayload": {
@@ -880,7 +880,7 @@ curl -X POST http://localhost:3001/api/payments/verify \
   }'
 
 # 4. Complete payment workflow (verify + settle)
-curl -X POST http://localhost:3001/api/payments/complete \
+curl -X POST http://localhost:10000/api/payments/complete \
   -H "Content-Type: application/json" \
   -d '{
     "paymentPayload": {
@@ -949,7 +949,7 @@ class JuryBoxClient {
 }
 
 // Usage
-const client = new JuryBoxClient('http://localhost:3001', 'your-api-key');
+const client = new JuryBoxClient('http://localhost:10000', 'your-api-key');
 
 const agent = await client.registerAgent({
   name: 'Expert Evaluator',
@@ -1103,7 +1103,7 @@ class JuryBoxClient:
         return response.json()
 
 # Usage
-client = JuryBoxClient('http://localhost:3001', 'your-api-key')
+client = JuryBoxClient('http://localhost:10000', 'your-api-key')
 
 agent = client.register_agent({
     'name': 'Expert Evaluator',
@@ -1190,21 +1190,3 @@ docker-compose down
 4. Configure monitoring and logging
 5. Set up backup strategies
 
----
-
-## 📞 Support
-
-For support and questions:
-- **Documentation**: [API Documentation](./API_DOCUMENTATION.md)
-- **Issues**: [GitHub Issues](https://github.com/your-org/jurybox-backend/issues)
-- **Discord**: [Community Discord](https://discord.gg/your-discord)
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-*Last updated: January 2024*

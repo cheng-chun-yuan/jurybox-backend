@@ -1,6 +1,7 @@
 /**
  * X402 Payment Service
  * Implements payment functionality for agent services using X402 A2A Payment Protocol Extension
+ * Following the a2a-x402 library best practices
  */
 
 import { 
@@ -9,11 +10,13 @@ import {
   verifyPayment,
   settlePayment,
   x402Utils,
+  DefaultFacilitatorClient,
   type PaymentPayload,
   type PaymentRequirements,
   type VerifyResponse,
   type SettleResponse,
-  type FacilitatorClient
+  type FacilitatorClient,
+  type x402PaymentRequiredResponse
 } from 'a2a-x402'
 import { Wallet } from 'ethers'
 
@@ -38,6 +41,33 @@ export interface PaymentVerification {
   payer?: string
   transaction?: string
   network?: string
+  error?: string
+}
+
+/**
+ * Mock Facilitator for Testing
+ * Following the example from a2a-x402 documentation
+ */
+export class MockFacilitatorClient implements FacilitatorClient {
+  async verify(payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse> {
+    console.log('Mock: Payment verification always succeeds')
+    return {
+      isValid: true,
+      payer: payload.payload.authorization.from,
+    }
+  }
+
+  async settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
+    const mockTxHash = `0x${Math.random().toString(16).substring(2, 66)}`
+    console.log(`Mock: Generated fake transaction ${mockTxHash}`)
+
+    return {
+      success: true,
+      transaction: mockTxHash,
+      network: requirements.network,
+      payer: payload.payload.authorization.from,
+    }
+  }
 }
 
 /**
@@ -60,26 +90,37 @@ export class JuryBoxFacilitatorClient implements FacilitatorClient {
     try {
       console.log('🔍 Verifying payment with JuryBox facilitator...')
       
-      // In production, this would make actual API calls to verify the payment
-      // For now, we'll implement basic validation
+      // Validate payment payload structure
       const isValid = this.validatePaymentPayload(payload, requirements)
       
       if (!isValid) {
         return {
           isValid: false,
-          error: 'Invalid payment payload or requirements'
+          invalidReason: 'Invalid payment payload structure'
+        }
+      }
+
+      // In production, you would verify the signature and check blockchain state
+      // For now, we'll do basic validation
+      const fromAddress = payload.payload.authorization.from
+      const toAddress = payload.payload.authorization.to
+      
+      if (!fromAddress || !toAddress) {
+        return {
+          isValid: false,
+          invalidReason: 'Missing required addresses'
         }
       }
 
       return {
         isValid: true,
-        payer: payload.payload.authorization.from,
+        payer: fromAddress,
       }
     } catch (error) {
       console.error('Payment verification failed:', error)
       return {
         isValid: false,
-        error: error instanceof Error ? error.message : 'Verification failed'
+        invalidReason: error instanceof Error ? error.message : 'Verification failed'
       }
     }
   }
@@ -92,7 +133,7 @@ export class JuryBoxFacilitatorClient implements FacilitatorClient {
       console.log('💰 Settling payment with JuryBox facilitator...')
       
       // In production, this would execute actual blockchain transactions
-      // For now, we'll simulate settlement
+      // For now, we'll simulate settlement with a realistic transaction hash format
       const mockTxHash = `0x${Math.random().toString(16).substring(2, 66)}`
       
       console.log(`✅ Payment settled with transaction: ${mockTxHash}`)
@@ -100,14 +141,15 @@ export class JuryBoxFacilitatorClient implements FacilitatorClient {
       return {
         success: true,
         transaction: mockTxHash,
-        network: requirements.network || 'ethereum',
+        network: requirements.network,
         payer: payload.payload.authorization.from,
       }
     } catch (error) {
       console.error('Payment settlement failed:', error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Settlement failed'
+        network: requirements.network,
+        errorReason: error instanceof Error ? error.message : 'Settlement failed'
       }
     }
   }
@@ -117,34 +159,50 @@ export class JuryBoxFacilitatorClient implements FacilitatorClient {
     requirements: PaymentRequirements
   ): boolean {
     // Basic validation logic
-    if (!payload.payload.authorization.from) {
+    if (!payload?.payload?.authorization?.from) {
       return false
     }
     
-    if (!payload.payload.authorization.to) {
+    if (!payload?.payload?.authorization?.to) {
       return false
     }
 
     // Check if the payment amount matches requirements
-    const paymentAmount = payload.payload.amount
-    const requiredAmount = requirements.price
+    const paymentAmount = payload.payload.authorization.value
+    const requiredAmount = requirements.maxAmountRequired
     
     // Simple string comparison for now (in production, use proper amount parsing)
     return paymentAmount === requiredAmount
   }
 }
 
+/**
+ * X402 Payment Service
+ * Simplified implementation following a2a-x402 best practices
+ */
 export class X402PaymentService {
-  private facilitator: JuryBoxFacilitatorClient
+  private facilitator?: FacilitatorClient
   private utils: x402Utils
 
-  constructor(facilitatorConfig?: { url?: string; apiKey?: string }) {
-    this.facilitator = new JuryBoxFacilitatorClient(facilitatorConfig)
+  constructor(facilitatorConfig?: { url?: string; apiKey?: string; useMock?: boolean }) {
     this.utils = new x402Utils()
+    
+    if (facilitatorConfig?.useMock) {
+      this.facilitator = new MockFacilitatorClient()
+    } else if (facilitatorConfig?.url) {
+      this.facilitator = new DefaultFacilitatorClient({
+        url: facilitatorConfig.url,
+        apiKey: facilitatorConfig.apiKey
+      })
+    } else {
+      // Use default facilitator (https://x402.org/facilitator)
+      this.facilitator = new DefaultFacilitatorClient()
+    }
   }
 
   /**
    * Request payment for a service using x402 protocol
+   * Following the server-side pattern from documentation
    */
   requestPayment(request: PaymentRequest): never {
     const price = `${request.amount} ${request.currency}`
@@ -157,13 +215,13 @@ export class X402PaymentService {
       price,
       payToAddress: request.recipient,
       resource,
-      description: request.description,
-      metadata: request.metadata
+      description: request.description
     })
   }
 
   /**
    * Process payment using x402 protocol
+   * Following the client-side pattern from documentation
    */
   async processPayment(
     privateKey: string,
@@ -172,18 +230,19 @@ export class X402PaymentService {
     try {
       console.log('🔄 Processing x402 payment...')
       
+      // Create ethers wallet from private key (required by a2a-x402)
       const wallet = new Wallet(privateKey)
       
       // Process the payment using x402 protocol
       const paymentPayload = await processPayment(
-        paymentRequirements.accepts[0],
+        paymentRequirements,
         wallet
       )
 
       return {
         success: true,
         paymentPayload,
-        transactionId: paymentPayload.payload.transaction
+        transactionId: paymentPayload.payload.authorization.nonce
       }
     } catch (error) {
       console.error('Payment processing failed:', error)
@@ -196,6 +255,7 @@ export class X402PaymentService {
 
   /**
    * Verify payment using x402 protocol
+   * Uses default facilitator automatically if no custom facilitator provided
    */
   async verifyPayment(
     paymentPayload: PaymentPayload,
@@ -213,7 +273,7 @@ export class X402PaymentService {
       return {
         isValid: verifyResult.isValid,
         payer: verifyResult.payer,
-        error: verifyResult.error
+        error: verifyResult.invalidReason
       }
     } catch (error) {
       console.error('Payment verification failed:', error)
@@ -226,6 +286,7 @@ export class X402PaymentService {
 
   /**
    * Settle payment using x402 protocol
+   * Uses default facilitator automatically if no custom facilitator provided
    */
   async settlePayment(
     paymentPayload: PaymentPayload,
@@ -248,7 +309,7 @@ export class X402PaymentService {
       } else {
         return {
           success: false,
-          error: settleResult.error || 'Settlement failed'
+          error: settleResult.errorReason || 'Settlement failed'
         }
       }
     } catch (error) {
@@ -262,10 +323,13 @@ export class X402PaymentService {
 
   /**
    * Get payment requirements from a task or request
+   * Following the client-side pattern from documentation
    */
   getPaymentRequirements(task: any): PaymentRequirements | null {
     try {
-      return this.utils.getPaymentRequirements(task)
+      const response = this.utils.getPaymentRequirements(task)
+      // The utils returns x402PaymentRequiredResponse, we need the first accepts item
+      return response?.accepts?.[0] || null
     } catch (error) {
       console.error('Failed to get payment requirements:', error)
       return null
