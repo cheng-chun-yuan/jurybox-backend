@@ -1,0 +1,68 @@
+services:
+  # Fastify Backend Server
+  fastify-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      target: dev
+    container_name: jurybox-fastify
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - FASTIFY_HOST=0.0.0.0
+      - FASTIFY_PORT=3001
+      - CORS_ORIGIN=http://localhost:3000
+      - LOG_LEVEL=info
+      # Hedera Configuration
+      - HEDERA_ACCOUNT_ID=${HEDERA_ACCOUNT_ID}
+      - HEDERA_PRIVATE_KEY=${HEDERA_PRIVATE_KEY}
+      - HEDERA_NETWORK=${HEDERA_NETWORK}
+      # Pinata IPFS Configuration
+      - PINATA_API_KEY=${PINATA_API_KEY}
+      - PINATA_API_SECRET=${PINATA_API_SECRET}
+      # AI Model Provider
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Application
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+    volumes:
+      - ./server:/app/server
+      - ./lib:/app/lib
+      - ./types:/app/types
+      - /app/node_modules
+    networks:
+      - jurybox-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ngrok - Expose Fastify server to the internet
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: jurybox-ngrok
+    restart: unless-stopped
+    command:
+      - "http"
+      - "fastify-server:3001"
+      - "--log=stdout"
+    environment:
+      # Add your ngrok authtoken here or via .env
+      # Get it from: https://dashboard.ngrok.com/get-started/your-authtoken
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040"  # ngrok web interface
+    networks:
+      - jurybox-network
+    depends_on:
+      fastify-server:
+        condition: service_healthy
+
+networks:
+  jurybox-network:
+    driver: bridge
+
+volumes:
+  node_modules:

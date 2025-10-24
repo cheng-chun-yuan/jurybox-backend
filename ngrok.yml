@@ -1,0 +1,27 @@
+# ngrok Configuration
+# Get your authtoken from: https://dashboard.ngrok.com/get-started/your-authtoken
+
+version: 2
+authtoken: ${NGROK_AUTHTOKEN}
+
+tunnels:
+  fastify-api:
+    proto: http
+    addr: fastify-server:3001
+    inspect: true
+    # Optional: Add custom domain if you have ngrok paid plan
+    # domain: your-custom-domain.ngrok.io
+
+    # Optional: Add basic auth
+    # auth: "username:password"
+
+    # Optional: Add IP restrictions
+    # ip_restriction:
+    #   allow_cidrs:
+    #     - 192.168.1.0/24
+
+  # Optional: Add webhook URL inspection
+  # web_addr: 0.0.0.0:4040
+
+log_level: info
+log_format: json
