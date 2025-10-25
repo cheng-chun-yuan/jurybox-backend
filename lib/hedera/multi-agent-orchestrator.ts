@@ -4,12 +4,12 @@
  * Implements the complete multi-agent evaluation system on Hedera
  */
 
-import type { 
-  Agent, 
-  JudgmentRequest, 
-  JudgmentResult, 
-  OrchestratorConfig, 
-  EvaluationProgress, 
+import type {
+  Agent,
+  JudgmentRequest,
+  JudgmentResult,
+  OrchestratorConfig,
+  EvaluationProgress,
   ConsensusResult,
   ConversationMessage,
   EvaluationTranscript,
@@ -19,6 +19,7 @@ import { getHCSService, type AgentMessage, type EvaluationRound } from './hcs-co
 import { ConsensusAlgorithms } from './consensus-algorithms'
 import { getX402Service } from '../x402/payment-service'
 import { getViemRegistryService } from '../erc8004/viem-registry-service'
+import { getOpenAIService } from '../ai/openai-service'
 
 // Remove duplicate interfaces - they're now imported from types/agent.ts
 
@@ -26,6 +27,7 @@ export class MultiAgentOrchestrator {
   private hcsService = getHCSService()
   private x402Service = getX402Service()
   private registryService = getViemRegistryService()
+  private openAIService = getOpenAIService()
 
   /**
    * Execute complete multi-agent evaluation workflow
@@ -33,7 +35,8 @@ export class MultiAgentOrchestrator {
    */
   async executeEvaluation(
     request: JudgmentRequest,
-    config: OrchestratorConfig
+    config: OrchestratorConfig,
+    existingTopicId?: string
   ): Promise<OrchestratorOutput> {
     const agents = request.selectedAgents
     console.log('🚀 Starting Multi-Agent Evaluation Orchestrator')
@@ -41,7 +44,7 @@ export class MultiAgentOrchestrator {
     console.log(`Algorithm: ${config.consensusAlgorithm}`)
 
     // Step 1: Setup Environment and Communication Layer
-    const topicId = await this.setupCommunicationLayer(request, agents, config)
+    const topicId = existingTopicId || await this.setupCommunicationLayer(request, agents, config)
 
     try {
       // Step 2: Define Agents and Evaluation Criteria (already done via agents config)
@@ -84,6 +87,7 @@ export class MultiAgentOrchestrator {
           agents,
           currentScores,
           request.content,
+          evaluationCriteria,
           config
         )
         currentScores = finalScores
@@ -230,6 +234,7 @@ export class MultiAgentOrchestrator {
     agents: Agent[],
     initialScores: Record<string, number>,
     content: string,
+    criteria: string[],
     config: OrchestratorConfig
   ): Promise<{
     finalScores: Record<string, number>
@@ -248,61 +253,73 @@ export class MultiAgentOrchestrator {
 
       // Each agent reviews peer scores and provides discussion
       for (const agent of agents) {
-        const peerScores = Object.entries(currentScores).filter(
-          ([id]) => id !== agent.id
-        )
+        const peerScoresData = Object.entries(currentScores)
+          .filter(([id]) => id !== agent.id)
+          .map(([id, score]) => ({
+            agentId: id,
+            agentName: agents.find(a => a.id === id)?.name || id,
+            score
+          }))
 
-        const discussion = this.generateAgentDiscussion(
-          agent,
-          currentScores[agent.id],
-          peerScores,
-          content
-        )
+        try {
+          console.log(`  💬 ${agent.name} is discussing...`)
+          const discussionResult = await this.openAIService.generateDiscussion(
+            agent,
+            currentScores[agent.id],
+            peerScoresData,
+            content,
+            criteria
+          )
 
-        // Publish discussion to HCS
-        await this.hcsService.broadcastDiscussion(
-          topicId,
-          agent.id,
-          agent.name,
-          discussion,
-          round
-        )
+          const discussion = discussionResult.discussion
 
-        // Agent may adjust score based on peer feedback
-        const adjustment = this.calculateScoreAdjustment(
-          currentScores[agent.id],
-          peerScores.map(([_, score]) => score),
-          config.convergenceThreshold
-        )
-
-        if (Math.abs(adjustment) > 0.1) {
-          const newScore = Math.max(0, Math.min(10, currentScores[agent.id] + adjustment))
-
-          await this.hcsService.submitAdjustment(
+          // Publish discussion to HCS
+          await this.hcsService.broadcastDiscussion(
             topicId,
             agent.id,
             agent.name,
-            currentScores[agent.id],
-            newScore,
-            `Adjusted after considering peer evaluations`,
+            discussion,
             round
           )
 
-          roundMessages.push({
-            type: 'adjustment',
-            agentId: agent.id,
-            agentName: agent.name,
-            timestamp: Date.now(),
-            roundNumber: round,
-            data: {
-              originalScore: currentScores[agent.id],
-              adjustedScore: newScore,
-              reasoning: discussion,
-            },
-          })
+          // Check if agent adjusted their score
+          if (discussionResult.adjustedScore !== undefined &&
+              Math.abs(discussionResult.adjustedScore - currentScores[agent.id]) > 0.1) {
+            const originalScore = currentScores[agent.id]
+            const newScore = discussionResult.adjustedScore
 
-          currentScores[agent.id] = newScore
-          console.log(`    ${agent.name}: ${currentScores[agent.id].toFixed(2)} (${adjustment > 0 ? '+' : ''}${adjustment.toFixed(2)})`)
+            await this.hcsService.submitAdjustment(
+              topicId,
+              agent.id,
+              agent.name,
+              originalScore,
+              newScore,
+              discussion,
+              round
+            )
+
+            roundMessages.push({
+              type: 'adjustment',
+              agentId: agent.id,
+              agentName: agent.name,
+              timestamp: Date.now(),
+              roundNumber: round,
+              data: {
+                originalScore,
+                adjustedScore: newScore,
+                reasoning: discussion,
+              },
+            })
+
+            currentScores[agent.id] = newScore
+            const adjustment = newScore - originalScore
+            console.log(`  ✅ ${agent.name}: ${currentScores[agent.id].toFixed(2)} (${adjustment > 0 ? '+' : ''}${adjustment.toFixed(2)})`)
+          } else {
+            console.log(`  ✅ ${agent.name}: keeping score ${currentScores[agent.id].toFixed(2)}`)
+          }
+        } catch (error) {
+          console.error(`  ❌ ${agent.name} discussion failed:`, error)
+          // Continue without discussion if OpenAI fails
         }
       }
 
@@ -405,50 +422,19 @@ export class MultiAgentOrchestrator {
     content: string,
     criteria: string[]
   ): Promise<number> {
-    // In production, this would call the actual AI model via API
-    // For now, simulate evaluation with realistic variance
-    const baseScore = 5 + Math.random() * 5 // 5-10 range
-    const agentBias = agent.reputation.averageRating / 10 // Slight bias based on reputation
-    const randomVariance = (Math.random() - 0.5) * 2 // -1 to +1
-
-    return Math.max(0, Math.min(10, baseScore + agentBias + randomVariance))
-  }
-
-  /**
-   * Generate agent discussion based on peer scores
-   */
-  private generateAgentDiscussion(
-    agent: Agent,
-    myScore: number,
-    peerScores: [string, number][],
-    content: string
-  ): string {
-    const avgPeerScore = peerScores.reduce((sum, [_, score]) => sum + score, 0) / peerScores.length
-    const diff = myScore - avgPeerScore
-
-    if (Math.abs(diff) < 0.5) {
-      return `I agree with the consensus. The evaluation appears well-balanced.`
-    } else if (diff > 0) {
-      return `I rated this higher than peers. I believe the ${agent.capabilities.specialties[0]} aspects deserve more recognition.`
-    } else {
-      return `I have concerns that peers may have overlooked. The ${agent.capabilities.specialties[0]} could be improved.`
+    try {
+      console.log(`  🤖 ${agent.name} is evaluating...`)
+      const result = await this.openAIService.evaluateContent(agent, content, criteria)
+      console.log(`  ✅ ${agent.name} scored: ${result.score.toFixed(2)}/10 (confidence: ${(result.confidence * 100).toFixed(1)}%)`)
+      return result.score
+    } catch (error) {
+      console.error(`  ❌ ${agent.name} evaluation failed, using fallback:`, error)
+      // Fallback to random score if OpenAI fails
+      const fallbackScore = 5 + Math.random() * 5
+      return Math.max(0, Math.min(10, fallbackScore))
     }
   }
 
-  /**
-   * Calculate score adjustment based on peer feedback
-   */
-  private calculateScoreAdjustment(
-    myScore: number,
-    peerScores: number[],
-    convergenceThreshold: number
-  ): number {
-    const avgPeerScore = peerScores.reduce((a, b) => a + b, 0) / peerScores.length
-    const diff = avgPeerScore - myScore
-
-    // Move towards peer average, but not all the way
-    return diff * 0.3 // Adjust by 30% of the difference
-  }
 
   /**
    * Create judgment results for each agent

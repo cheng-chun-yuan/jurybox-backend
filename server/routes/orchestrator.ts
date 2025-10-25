@@ -83,6 +83,16 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
         outlierDetection: config.outlierDetection ?? true
       }
 
+      // Create HCS topic immediately before starting evaluation
+      const hcsService = (await import('../../lib/hedera/hcs-communication.js')).getHCSService()
+      const topicId = await hcsService.createEvaluationTopic(judgmentRequest.id, {
+        title: `Evaluation-${judgmentRequest.id}`,
+        numberOfAgents: judgmentRequest.selectedAgents.length,
+        maxRounds: finalConfig.maxDiscussionRounds,
+      })
+
+      console.log(`📡 HCS Topic created: ${topicId}`)
+
       // Initialize progress tracking
       const progress: EvaluationProgress = {
         status: 'initializing',
@@ -90,7 +100,7 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
         totalRounds: finalConfig.maxDiscussionRounds,
         scoresReceived: 0,
         totalAgents: judgmentRequest.selectedAgents.length,
-        topicId: undefined,
+        topicId,
         currentScores: undefined,
         variance: undefined
       }
@@ -100,8 +110,8 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
         startTime: Date.now()
       })
 
-      // Start evaluation asynchronously
-      orchestrator.executeEvaluation(judgmentRequest, finalConfig)
+      // Start evaluation asynchronously (topic already created)
+      orchestrator.executeEvaluation(judgmentRequest, finalConfig, topicId)
         .then((result) => {
           const evaluation = activeEvaluations.get(judgmentRequest.id)
           if (evaluation) {
@@ -122,7 +132,7 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
       return reply.status(202).send({
         evaluationId: judgmentRequest.id,
         status: 'started',
-        topicId: undefined, // Will be set when evaluation starts
+        topicId, // Return topic ID immediately
         message: 'Evaluation started successfully'
       })
 
@@ -668,47 +678,74 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
 
       console.log(`✅ Config: ${JSON.stringify(config, null, 2)}`)
 
-      // Step 4: Execute multi-agent evaluation
-      console.log('\n🚀 Step 4: Executing Multi-Agent Evaluation')
+      // Step 4: Create HCS topic immediately before starting evaluation
+      console.log('\n📡 Step 4: Creating HCS Topic')
+      const hcsService = (await import('../../lib/hedera/hcs-communication.js')).getHCSService()
+      const topicId = await hcsService.createEvaluationTopic(judgmentRequest.id, {
+        title: `Evaluation-${judgmentRequest.id}`,
+        numberOfAgents: judgmentRequest.selectedAgents.length,
+        maxRounds: config.maxDiscussionRounds,
+      })
+
+      console.log(`📡 HCS Topic created: ${topicId}`)
+
+      // Initialize progress tracking
+      const progress: EvaluationProgress = {
+        status: 'initializing',
+        currentRound: 0,
+        totalRounds: config.maxDiscussionRounds,
+        scoresReceived: 0,
+        totalAgents: judgmentRequest.selectedAgents.length,
+        topicId,
+        currentScores: undefined,
+        variance: undefined
+      }
+
+      activeEvaluations.set(judgmentRequest.id, {
+        progress,
+        startTime: Date.now()
+      })
+
+      // Step 5: Execute multi-agent evaluation asynchronously (topic already created)
+      console.log('\n🚀 Step 5: Executing Multi-Agent Evaluation (async)')
       console.log('   This will:')
-      console.log('   1. Create HCS topic for agent communication')
-      console.log('   2. Run independent scoring round')
-      console.log('   3. Run discussion rounds (if enabled)')
-      console.log('   4. Calculate consensus')
-      console.log('   5. Publish final result to HCS')
+      console.log('   1. Run independent scoring round')
+      console.log('   2. Run discussion rounds (if enabled)')
+      console.log('   3. Calculate consensus')
+      console.log('   4. Publish final result to HCS')
       console.log('')
 
       const orchestratorInstance = getOrchestrator()
-      const result = await orchestratorInstance.executeEvaluation(judgmentRequest, config)
+      orchestratorInstance.executeEvaluation(judgmentRequest, config, topicId)
+        .then((result) => {
+          const evaluation = activeEvaluations.get(judgmentRequest.id)
+          if (evaluation) {
+            evaluation.output = result
+            evaluation.progress = result.progress
+            activeEvaluations.set(judgmentRequest.id, evaluation)
+          }
+          console.log('\n✅ Evaluation Complete!')
+          console.log(`   📡 Topic ID: ${result.topicId}`)
+          console.log(`   🎯 Final Score: ${result.consensus.finalScore.toFixed(2)}/10`)
+          console.log(`   📊 Confidence: ${(result.consensus.confidence * 100).toFixed(1)}%`)
+          console.log(`   🔄 Rounds: ${result.progress.currentRound}`)
+          console.log(`   📈 Variance: ${result.consensus.variance.toFixed(3)}`)
+        })
+        .catch((error) => {
+          console.error('❌ Evaluation failed:', error)
+          const evaluation = activeEvaluations.get(judgmentRequest.id)
+          if (evaluation) {
+            evaluation.progress.status = 'failed'
+            activeEvaluations.set(judgmentRequest.id, evaluation)
+          }
+        })
 
-      // Step 5: Format and return results
-      console.log('\n✅ Evaluation Complete!')
-      console.log(`   📡 Topic ID: ${result.topicId}`)
-      console.log(`   🎯 Final Score: ${result.consensus.finalScore.toFixed(2)}/10`)
-      console.log(`   📊 Confidence: ${(result.consensus.confidence * 100).toFixed(1)}%`)
-      console.log(`   🔄 Rounds: ${result.progress.currentRound}`)
-      console.log(`   📈 Variance: ${result.consensus.variance.toFixed(3)}`)
-
-      return reply.send({
+      return reply.status(202).send({
         success: true,
         evaluationId,
-        topicId: result.topicId,
-        consensus: {
-          finalScore: result.consensus.finalScore,
-          confidence: result.consensus.confidence,
-          variance: result.consensus.variance,
-          algorithm: result.consensus.algorithm,
-          convergenceRounds: result.consensus.convergenceRounds
-        },
-        progress: result.progress,
-        individualResults: result.individualResults,
-        transcript: result.transcript,
-        agentsSummary: judgmentRequest.selectedAgents.map(a => ({
-          id: a.id,
-          name: a.name,
-          score: result.consensus.individualScores[a.id]
-        })),
-        message: 'Multi-agent orchestrator test completed successfully'
+        topicId,
+        status: 'started',
+        message: 'Multi-agent orchestrator test started successfully. Use /orchestrator/progress/:evaluationId to check progress.'
       })
 
     } catch (error: any) {
