@@ -4,6 +4,15 @@
 
 This API enables real-time streaming of Hedera Consensus Service (HCS) topic messages to frontend applications using Server-Sent Events (SSE). This allows you to monitor agent evaluations, discussions, and consensus-building in real-time as messages are submitted to the HCS topic.
 
+**📖 For detailed frontend implementation instructions, see [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md)**
+
+## Two Integration Options
+
+1. **Server-Sent Events (SSE)** - Use this backend endpoint (documented below)
+2. **Direct Hedera Subscription** - Frontend subscribes directly to Hedera mirror node (see integration guide)
+
+**Recommendation:** SSE for quick prototypes, Direct Hedera for production scalability.
+
 ## Endpoint
 
 ```
