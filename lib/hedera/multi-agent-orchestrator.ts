@@ -4,30 +4,23 @@
  * Implements the complete multi-agent evaluation system on Hedera
  */
 
-import type { Agent, JudgmentRequest, JudgmentResult } from '../../types/agent'
+import type { 
+  Agent, 
+  JudgmentRequest, 
+  JudgmentResult, 
+  OrchestratorConfig, 
+  EvaluationProgress, 
+  ConsensusResult,
+  ConversationMessage,
+  EvaluationTranscript,
+  OrchestratorOutput
+} from '../../types/agent'
 import { getHCSService, type AgentMessage, type EvaluationRound } from './hcs-communication'
-import { ConsensusAlgorithms, type ConsensusResult } from './consensus-algorithms'
+import { ConsensusAlgorithms } from './consensus-algorithms'
 import { getX402Service } from '../x402/payment-service'
 import { getViemRegistryService } from '../erc8004/viem-registry-service'
 
-export interface OrchestratorConfig {
-  maxDiscussionRounds: number
-  roundTimeout: number // milliseconds
-  consensusAlgorithm: 'simple_average' | 'weighted_average' | 'median' | 'trimmed_mean' | 'iterative_convergence' | 'delphi_method'
-  enableDiscussion: boolean
-  convergenceThreshold: number
-  outlierDetection: boolean
-}
-
-export interface EvaluationProgress {
-  status: 'initializing' | 'scoring' | 'discussing' | 'converging' | 'completed' | 'failed'
-  currentRound: number
-  totalRounds: number
-  scoresReceived: number
-  totalAgents: number
-  topicId?: string
-  messages: AgentMessage[]
-}
+// Remove duplicate interfaces - they're now imported from types/agent.ts
 
 export class MultiAgentOrchestrator {
   private hcsService = getHCSService()
@@ -40,14 +33,9 @@ export class MultiAgentOrchestrator {
    */
   async executeEvaluation(
     request: JudgmentRequest,
-    agents: Agent[],
     config: OrchestratorConfig
-  ): Promise<{
-    consensusResult: ConsensusResult
-    judgmentResults: JudgmentResult[]
-    evaluationRounds: EvaluationRound[]
-    topicId: string
-  }> {
+  ): Promise<OrchestratorOutput> {
+    const agents = request.selectedAgents
     console.log('🚀 Starting Multi-Agent Evaluation Orchestrator')
     console.log(`Agents: ${agents.map((a) => a.name).join(', ')}`)
     console.log(`Algorithm: ${config.consensusAlgorithm}`)
@@ -134,11 +122,36 @@ export class MultiAgentOrchestrator {
       console.log(`Confidence: ${(consensusResult.confidence * 100).toFixed(1)}%`)
       console.log(`Convergence: ${consensusResult.convergenceRounds} rounds`)
 
-      return {
-        consensusResult,
-        judgmentResults,
-        evaluationRounds,
+      // Create transcript from evaluation rounds
+      const transcript = this.createTranscript(topicId, evaluationRounds)
+
+      // Create progress object
+      const progress: EvaluationProgress = {
+        status: 'completed',
+        currentRound: evaluationRounds.length,
+        totalRounds: config.maxDiscussionRounds,
+        scoresReceived: agents.length,
+        totalAgents: agents.length,
         topicId,
+        currentScores: consensusResult.individualScores,
+        variance: consensusResult.variance
+      }
+
+      return {
+        requestId: request.id,
+        topicId,
+        progress,
+        transcript,
+        consensus: consensusResult,
+        individualResults: judgmentResults.map(result => ({
+          agentId: result.agentId,
+          score: result.score,
+          feedback: result.feedback,
+          strengths: result.strengths,
+          improvements: result.improvements,
+          completedAt: result.completedAt,
+          paymentTx: result.paymentTx
+        }))
       }
     } catch (error) {
       console.error('Error in evaluation workflow:', error)
@@ -472,6 +485,89 @@ export class MultiAgentOrchestrator {
         console.log(`  ✓ Updated reputation for ${agent.name}`)
       }
     }
+  }
+
+  /**
+   * Create evaluation transcript from rounds
+   */
+  private createTranscript(
+    topicId: string,
+    evaluationRounds: EvaluationRound[]
+  ): EvaluationTranscript {
+    const rounds = evaluationRounds.map(round => {
+      const messages: ConversationMessage[] = round.messages.map(msg => ({
+        id: `${msg.agentId}_${msg.timestamp}`,
+        role: 'agent' as const,
+        agentId: msg.agentId,
+        content: this.formatMessageContent(msg),
+        timestamp: msg.timestamp,
+        phase: this.getPhaseFromMessageType(msg.type),
+        round: msg.roundNumber,
+        hcsTxId: undefined // Would be populated from HCS service
+      }))
+
+      return {
+        round: round.roundNumber,
+        variance: this.calculateRoundVariance(round.messages),
+        messages
+      }
+    })
+
+    return {
+      topicId,
+      rounds
+    }
+  }
+
+  /**
+   * Format message content for transcript
+   */
+  private formatMessageContent(msg: AgentMessage): string {
+    switch (msg.type) {
+      case 'score':
+        return `Initial score: ${msg.data.score?.toFixed(2)}/10. ${msg.data.reasoning || ''}`
+      case 'discussion':
+        return msg.data.discussion || 'Participated in discussion'
+      case 'adjustment':
+        return `Score adjusted from ${msg.data.originalScore?.toFixed(2)} to ${msg.data.adjustedScore?.toFixed(2)}. ${msg.data.reasoning || ''}`
+      case 'final':
+        return `Final consensus: ${msg.data.score?.toFixed(2)}/10`
+      default:
+        return 'Unknown message type'
+    }
+  }
+
+  /**
+   * Get phase from message type
+   */
+  private getPhaseFromMessageType(type: string): 'scoring' | 'discussion' | 'consensus' {
+    switch (type) {
+      case 'score':
+        return 'scoring'
+      case 'discussion':
+      case 'adjustment':
+        return 'discussion'
+      case 'final':
+        return 'consensus'
+      default:
+        return 'scoring'
+    }
+  }
+
+  /**
+   * Calculate variance for a round
+   */
+  private calculateRoundVariance(messages: AgentMessage[]): number {
+    const scores = messages
+      .map(msg => msg.data.score || msg.data.adjustedScore)
+      .filter(score => score !== undefined) as number[]
+    
+    if (scores.length === 0) return 0
+    
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length
+    const variance = scores.reduce((acc, score) => acc + Math.pow(score - mean, 2), 0) / scores.length
+    
+    return Math.sqrt(variance) // Return standard deviation
   }
 }
 

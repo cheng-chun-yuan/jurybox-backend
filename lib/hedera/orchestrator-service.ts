@@ -1,427 +1,467 @@
 /**
- * Multi-Agent Orchestrator Service
- * Handles multi-round evaluation, consensus algorithms, and coordination
+ * Orchestrator Service
+ * Manages orchestrators and their associated AA wallets
+ * Handles creation, funding, and balance checking
  */
 
-import { getHCSService } from './hcs-service.js'
-import { dbService } from '../database.js'
-import { getX402Service } from '../x402/payment-service.js'
+import {
+  Client,
+  AccountId,
+  PrivateKey,
+  AccountCreateTransaction,
+  Hbar,
+  TransferTransaction,
+  AccountBalanceQuery,
+  AccountInfoQuery,
+} from '@hashgraph/sdk'
+import { getDatabase } from '../database.js'
+import CryptoJS from 'crypto-js'
 
-export interface ConsensusResult {
-  consensus: boolean
-  finalScore?: number
-  confidence: number
-  round: number
-  scores: Array<{
-    judgeId: number
-    score: number
-    reasoning: string
-    weight: number
-  }>
-  metaScores: {
-    average: number
-    median: number
-    standardDeviation: number
-    agreement: number
+export interface CreateOrchestratorRequest {
+  userAddress: string
+  config: {
+    maxDiscussionRounds: number
+    roundTimeout: number
+    consensusAlgorithm: string
+    enableDiscussion: boolean
+    convergenceThreshold: number
+    outlierDetection: boolean
   }
+  systemPrompt: string
+  network: 'testnet' | 'mainnet'
+  initialFunding?: number
 }
 
-export interface RoundResult {
-  round: number
-  consensus: boolean
-  scores: any[]
-  metaScores: any
-  nextRound?: number
+export interface CreateOrchestratorResponse {
+  orchestratorId: string
+  wallet: {
+    address: string
+    accountId: string
+    publicKey: string
+    isActive: boolean
+    createdAt: number
+    lastUsed: number
+  }
+  systemPrompt: string
+  config: any
+  status: 'created'
+}
+
+export interface FundWalletRequest {
+  orchestratorId: string
+  amount: number
+  userAddress: string
+  transactionHash: string
+}
+
+export interface FundWalletResponse {
+  success: boolean
+  message: string
+}
+
+export interface BalanceResponse {
+  balance: {
+    hbar: string
+    tinybars: string
+    lastChecked: number
+  }
+  accountId: string
+  address: string
+}
+
+export interface OrchestratorStatusResponse {
+  orchestratorId: string
+  status: string
+  wallet: {
+    address: string
+    accountId: string
+    isActive: boolean
+  }
+  config: any
+  systemPrompt: string
+  createdAt: number
 }
 
 export class OrchestratorService {
-  private hcsService = getHCSService()
-  private paymentService = getX402Service()
+  private client: Client
+  private operatorAccountId: AccountId
+  private operatorPrivateKey: PrivateKey
+  private prisma: any
+  private encryptionKey: string
 
-  /**
-   * Start a new evaluation task
-   */
-  async startTask(taskId: string, content: string, judges: number[], maxRounds: number = 3): Promise<string> {
-    try {
-      console.log(`🚀 Starting task ${taskId} with ${judges.length} judges...`)
+  constructor() {
+    // Initialize with main account credentials
+    const accountIdStr = process.env.HEDERA_ACCOUNT_ID || ''
+    const privateKeyStr = process.env.HEDERA_PRIVATE_KEY || ''
+    this.encryptionKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-in-production'
 
-      // Create HCS topic for this task
-      const topicInfo = await this.hcsService.createTopic(`JuryBox Task: ${taskId}`)
-      
-      // Create task in database
-      const task = await dbService.createTask({
-        taskId,
-        content,
-        topicId: topicInfo.topicId,
-        creatorAddress: process.env.CREATOR_ADDRESS || '0.0.1234',
-        maxRounds,
-      })
-
-      // Log task creation
-      await dbService.logEvent({
-        taskId,
-        event: 'task_created',
-        data: { content, judges, maxRounds, topicId: topicInfo.topicId },
-      })
-
-      // Announce task to HCS
-      const judgeAddresses = await this.getJudgeAddresses(judges)
-      await this.hcsService.announceTask(taskId, topicInfo.topicId, content, judgeAddresses)
-
-      // Start first round
-      await this.startRound(taskId, 1)
-
-      console.log(`✅ Task ${taskId} started successfully`)
-      return topicInfo.topicId
-    } catch (error) {
-      console.error(`❌ Failed to start task ${taskId}:`, error)
-      throw error
+    if (!accountIdStr || !privateKeyStr) {
+      throw new Error('Hedera credentials not configured (HEDERA_ACCOUNT_ID, HEDERA_PRIVATE_KEY)')
     }
-  }
 
-  /**
-   * Start a new round
-   */
-  async startRound(taskId: string, round: number): Promise<void> {
-    try {
-      console.log(`🔄 Starting round ${round} for task ${taskId}...`)
-
-      // Update task status
-      await dbService.updateTaskStatus(taskId, 'active', round)
-
-      // Log round start
-      await dbService.logEvent({
-        taskId,
-        event: 'round_started',
-        data: { round },
-      })
-
-      // Announce round start to HCS
-      const task = await dbService.getTaskById(taskId)
-      if (task) {
-        await this.hcsService.submitMessage(
-          task.topicId,
-          JSON.stringify({
-            type: 'round_start',
-            taskId,
-            round,
-            timestamp: new Date().toISOString(),
-          })
-        )
-      }
-
-      console.log(`✅ Round ${round} started for task ${taskId}`)
-    } catch (error) {
-      console.error(`❌ Failed to start round ${round} for task ${taskId}:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Process submitted scores and check for consensus
-   */
-  async processScores(taskId: string, round: number): Promise<RoundResult> {
-    try {
-      console.log(`📊 Processing scores for task ${taskId}, round ${round}...`)
-
-      // Get all scores for this round
-      const scores = await dbService.getScoresForTask(taskId, round)
-      
-      if (scores.length === 0) {
-        throw new Error('No scores found for this round')
-      }
-
-      // Calculate consensus
-      const consensusResult = await this.calculateConsensus(scores, round)
-
-      // Log consensus calculation
-      await dbService.logEvent({
-        taskId,
-        event: 'consensus_calculated',
-        data: { round, consensus: consensusResult.consensus, metaScores: consensusResult.metaScores },
-      })
-
-      // Announce round completion
-      const task = await dbService.getTaskById(taskId)
-      if (task) {
-        await this.hcsService.announceRoundCompletion(
-          taskId,
-          task.topicId,
-          round,
-          consensusResult.consensus,
-          consensusResult.consensus ? undefined : round + 1
-        )
-      }
-
-      const result: RoundResult = {
-        round,
-        consensus: consensusResult.consensus,
-        scores: consensusResult.scores,
-        metaScores: consensusResult.metaScores,
-        nextRound: consensusResult.consensus ? undefined : round + 1,
-      }
-
-      if (consensusResult.consensus) {
-        // Finalize task
-        await this.finalizeTask(taskId, consensusResult.finalScore!, consensusResult)
-      } else if (round < (task?.maxRounds || 3)) {
-        // Start next round
-        await this.startRound(taskId, round + 1)
-      } else {
-        // Max rounds reached, finalize with current consensus
-        await this.finalizeTask(taskId, consensusResult.metaScores.average, consensusResult)
-      }
-
-      return result
-    } catch (error) {
-      console.error(`❌ Failed to process scores for task ${taskId}:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Calculate consensus using multiple algorithms
-   */
-  async calculateConsensus(scores: any[], round: number): Promise<ConsensusResult> {
-    const scoreValues = scores.map(s => s.score)
-    const judgeIds = scores.map(s => s.judgeId)
-    const reasonings = scores.map(s => s.reasoning)
-
-    // Calculate basic statistics
-    const average = scoreValues.reduce((sum, score) => sum + score, 0) / scoreValues.length
-    const sortedScores = [...scoreValues].sort((a, b) => a - b)
-    const median = sortedScores[Math.floor(sortedScores.length / 2)]
+    this.operatorAccountId = AccountId.fromString(accountIdStr)
+    this.operatorPrivateKey = PrivateKey.fromStringECDSA(privateKeyStr)
     
-    // Calculate standard deviation
-    const variance = scoreValues.reduce((sum, score) => sum + Math.pow(score - average, 2), 0) / scoreValues.length
-    const standardDeviation = Math.sqrt(variance)
+    const network = process.env.HEDERA_NETWORK || 'testnet'
+    this.client = network === 'mainnet' 
+      ? Client.forMainnet().setOperator(this.operatorAccountId, this.operatorPrivateKey)
+      : Client.forTestnet().setOperator(this.operatorAccountId, this.operatorPrivateKey)
+    
+    this.prisma = getDatabase()
+  }
 
-    // Calculate agreement (inverse of coefficient of variation)
-    const agreement = standardDeviation === 0 ? 1 : Math.max(0, 1 - (standardDeviation / average))
+  /**
+   * Create new orchestrator with AA wallet
+   */
+  async createOrchestrator(request: CreateOrchestratorRequest): Promise<CreateOrchestratorResponse> {
+    try {
+      console.log('🎯 Creating orchestrator with AA wallet...')
+      console.log(`User Address: ${request.userAddress}`)
+      console.log(`Network: ${request.network}`)
 
-    // Determine consensus based on multiple criteria
-    const consensusThreshold = 0.8 // 80% agreement
-    const maxDeviation = 0.1 // Maximum 10% deviation from mean
-    const minScores = 3 // Minimum number of scores required
+      // 1. Generate unique orchestrator ID
+      const orchestratorId = `orch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      console.log(`Orchestrator ID: ${orchestratorId}`)
 
-    const consensus = 
-      scores.length >= minScores &&
-      agreement >= consensusThreshold &&
-      standardDeviation <= maxDeviation
+      // 2. Create Hedera account for AA wallet
+      const hederaAccount = await this.createHederaAccount()
+      console.log(`Created Hedera account: ${hederaAccount.accountId}`)
 
-    const metaScores = {
-      average,
-      median,
-      standardDeviation,
-      agreement,
-    }
+      // 3. Generate key pair
+      const keyPair = await this.generateKeyPair()
+      console.log(`Generated key pair`)
 
-    // Calculate weighted scores (based on judge reputation)
-    const weightedScores = await Promise.all(
-      scores.map(async (score) => {
-        const judge = await dbService.getAgentById(score.judgeId)
-        const weight = judge?.reputation || 1.0
-        return {
-          judgeId: score.judgeId,
-          score: score.score,
-          reasoning: score.reasoning,
-          weight,
-        }
+      // 4. Encrypt private key
+      const encryptedPrivateKey = await this.encryptPrivateKey(keyPair.privateKey)
+      console.log(`Encrypted private key`)
+
+      // 5. Store in database
+      await this.saveOrchestrator({
+        id: orchestratorId,
+        userAddress: request.userAddress,
+        systemPrompt: request.systemPrompt,
+        config: JSON.stringify(request.config),
+        status: 'created'
       })
-    )
+
+      await this.saveAAWallet({
+        id: `wallet-${orchestratorId}`,
+        orchestratorId,
+        address: hederaAccount.address,
+        accountId: hederaAccount.accountId,
+        publicKey: keyPair.publicKey,
+        privateKeyEncrypted: encryptedPrivateKey,
+        isActive: true
+      })
+
+      console.log(`✅ Orchestrator created successfully`)
+
+      return {
+        orchestratorId,
+        wallet: {
+          address: hederaAccount.address,
+          accountId: hederaAccount.accountId,
+          publicKey: keyPair.publicKey,
+          isActive: true,
+          createdAt: Date.now(),
+          lastUsed: Date.now()
+        },
+        systemPrompt: request.systemPrompt,
+        config: request.config,
+        status: 'created'
+      }
+    } catch (error) {
+      console.error('❌ Failed to create orchestrator:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Record funding transaction
+   */
+  async recordFunding(request: FundWalletRequest): Promise<FundWalletResponse> {
+    try {
+      console.log(`💰 Recording funding for orchestrator: ${request.orchestratorId}`)
+
+      // 1. Verify orchestrator exists
+      const orchestrator = await this.getOrchestrator(request.orchestratorId)
+      if (!orchestrator) {
+        throw new Error('Orchestrator not found')
+      }
+
+      // 2. Update last_used timestamp
+      await this.updateWalletLastUsed(request.orchestratorId)
+
+      // 3. Log transaction (optional - could store in audit table)
+      console.log(`Funding recorded: ${request.amount} HBAR, TX: ${request.transactionHash}`)
+
+      return { success: true, message: 'Funding recorded successfully' }
+    } catch (error) {
+      console.error('❌ Failed to record funding:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get balance from Hedera Mirror Node
+   */
+  async getWalletBalance(orchestratorId: string): Promise<BalanceResponse> {
+    try {
+      console.log(`🔍 Getting balance for orchestrator: ${orchestratorId}`)
+
+      // 1. Get account ID from database
+      const wallet = await this.getAAWallet(orchestratorId)
+      if (!wallet) {
+        throw new Error('Wallet not found')
+      }
+
+      // 2. Call Hedera Mirror Node API
+      const network = process.env.HEDERA_NETWORK || 'testnet'
+      const mirrorNodeUrl = network === 'mainnet' 
+        ? 'https://mainnet-public.mirrornode.hedera.com'
+        : 'https://testnet.mirrornode.hedera.com'
+      
+      const response = await fetch(`${mirrorNodeUrl}/api/v1/accounts/${wallet.accountId}`)
+      
+      if (!response.ok) {
+        throw new Error(`Mirror node request failed: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // 3. Extract and convert balance
+      const tinybars = data.balance?.balance || '0'
+      const hbar = (parseInt(tinybars) / 100000000).toString()
+
+      console.log(`Balance: ${hbar} HBAR (${tinybars} tinybars)`)
+
+      return {
+        balance: {
+          hbar,
+          tinybars,
+          lastChecked: Date.now()
+        },
+        accountId: wallet.accountId,
+        address: wallet.address
+      }
+    } catch (error) {
+      console.error('❌ Failed to get wallet balance:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get orchestrator status
+   */
+  async getOrchestratorStatus(orchestratorId: string): Promise<OrchestratorStatusResponse> {
+    try {
+      const orchestrator = await this.getOrchestrator(orchestratorId)
+      if (!orchestrator) {
+        throw new Error('Orchestrator not found')
+      }
+
+      const wallet = await this.getAAWallet(orchestratorId)
+      if (!wallet) {
+        throw new Error('Wallet not found')
+      }
 
     return {
-      consensus,
-      finalScore: consensus ? average : undefined,
-      confidence: agreement,
-      round,
-      scores: weightedScores,
-      metaScores,
-    }
-  }
-
-  /**
-   * Finalize a task and process payments
-   */
-  async finalizeTask(taskId: string, finalScore: number, consensusData: ConsensusResult): Promise<void> {
-    try {
-      console.log(`🏁 Finalizing task ${taskId} with final score: ${finalScore}`)
-
-      // Update task status
-      await dbService.finalizeTask(taskId, finalScore)
-
-      // Submit final report to HCS
-      const task = await dbService.getTaskById(taskId)
-      if (task) {
-        await this.hcsService.submitFinalReport(taskId, task.topicId, finalScore, consensusData)
+        orchestratorId: orchestrator.id,
+        status: orchestrator.status,
+        wallet: {
+          address: wallet.address,
+          accountId: wallet.accountId,
+          isActive: wallet.isActive
+        },
+        config: JSON.parse(orchestrator.config || '{}'),
+        systemPrompt: orchestrator.systemPrompt || '',
+        createdAt: orchestrator.createdAt.getTime()
       }
-
-      // Process payments for all judges
-      await this.processPayments(taskId)
-
-      // Log task completion
-      await dbService.logEvent({
-        taskId,
-        event: 'task_completed',
-        data: { finalScore, consensusData },
-      })
-
-      console.log(`✅ Task ${taskId} finalized successfully`)
     } catch (error) {
-      console.error(`❌ Failed to finalize task ${taskId}:`, error)
+      console.error('❌ Failed to get orchestrator status:', error)
       throw error
     }
   }
 
   /**
-   * Process payments for all judges in a task
+   * Create Hedera account
    */
-  async processPayments(taskId: string): Promise<void> {
+  private async createHederaAccount(): Promise<{ address: string; accountId: string }> {
     try {
-      console.log(`💰 Processing payments for task ${taskId}...`)
-
-      const task = await dbService.getTaskById(taskId)
-      if (!task) {
-        throw new Error('Task not found')
-      }
-
-      // Get all judges who participated
-      const scores = await dbService.getScoresForTask(taskId)
-      const uniqueJudges = [...new Set(scores.map(s => s.judgeId))]
-
-      for (const judgeId of uniqueJudges) {
-        const judge = await dbService.getAgentById(judgeId)
-        if (!judge) continue
-
-        try {
-          // Create payment record
-          await dbService.createPayment({
-            taskId,
-            judgeId,
-            amount: judge.fee,
-          })
-
-          // Process X402 payment
-          const paymentResult = await this.processJudgePayment(taskId, judgeId, judge.fee, judge.payToAddress)
-          
-          if (paymentResult.success) {
-            // Update payment status
-            await dbService.updatePaymentStatus(taskId, judgeId, 'settled', paymentResult.transactionId)
-            
-            // Submit payment record to HCS
-            await this.hcsService.submitPaymentRecord(
-              taskId,
-              task.topicId,
-              judgeId.toString(),
-              judge.fee,
-              paymentResult.transactionId || ''
-            )
-          }
-
-          console.log(`✅ Payment processed for judge ${judgeId}`)
-        } catch (error) {
-          console.error(`❌ Failed to process payment for judge ${judgeId}:`, error)
-          // Continue with other judges
-        }
-      }
-
-      console.log(`✅ All payments processed for task ${taskId}`)
-    } catch (error) {
-      console.error(`❌ Failed to process payments for task ${taskId}:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Process payment for a single judge using X402
-   */
-  private async processJudgePayment(taskId: string, judgeId: number, amount: number, payToAddress: string): Promise<{ success: boolean; transactionId?: string }> {
-    try {
-      // Build payment requirements
-      const paymentRequirements = {
-        price: `${amount} HBAR`,
-        payToAddress,
-        resource: `/evaluation/${taskId}`,
-        description: `Payment for task evaluation: ${taskId}`,
-      }
-
-      // Process payment (this would use the creator's private key)
-      const creatorPrivateKey = process.env.CREATOR_PRIVATE_KEY
-      if (!creatorPrivateKey) {
-        throw new Error('Creator private key not configured')
-      }
-
-      const paymentResult = await this.paymentService.processPayment(creatorPrivateKey, paymentRequirements as any)
+      // Generate a new key pair for the AA wallet
+      const newKeyPair = PrivateKey.generateECDSA()
       
-      if (paymentResult.success && paymentResult.paymentPayload) {
-        // Verify and settle payment
-        const verification = await this.paymentService.verifyPayment(
-          paymentResult.paymentPayload,
-          paymentRequirements as any
-        )
+      // Create account transaction
+      const transaction = new AccountCreateTransaction()
+        .setKey(newKeyPair.publicKey)
+        .setInitialBalance(new Hbar(0)) // Start with 0 balance
 
-        if (verification.isValid) {
-          const settlement = await this.paymentService.settlePayment(
-            paymentResult.paymentPayload,
-            paymentRequirements as any
-          )
+      // Submit the transaction
+      const txResponse = await transaction.execute(this.client)
+      const receipt = await txResponse.getReceipt(this.client)
+      const accountId = receipt.accountId
 
-          return {
-            success: settlement.success,
-            transactionId: settlement.transactionId,
-          }
-        }
+      if (!accountId) {
+        throw new Error('Failed to create Hedera account - no account ID returned')
       }
 
-      return { success: false }
+      return {
+        address: newKeyPair.publicKey.toString(),
+        accountId: accountId.toString()
+      }
     } catch (error) {
-      console.error(`❌ Payment processing failed for judge ${judgeId}:`, error)
-      return { success: false }
+      console.error('❌ Failed to create Hedera account:', error)
+      throw error
     }
   }
 
   /**
-   * Get judge addresses for HCS announcements
+   * Generate ECDSA key pair
    */
-  private async getJudgeAddresses(judgeIds: number[]): Promise<string[]> {
-    const addresses: string[] = []
-    
-    for (const judgeId of judgeIds) {
-      const judge = await dbService.getAgentById(judgeId)
-      if (judge) {
-        addresses.push(judge.accountId)
-      }
-    }
-    
-    return addresses
-  }
-
-  /**
-   * Get task status and progress
-   */
-  async getTaskStatus(taskId: string): Promise<any> {
-    const task = await dbService.getTaskById(taskId)
-    if (!task) {
-      throw new Error('Task not found')
-    }
-
-    const scores = await dbService.getScoresForTask(taskId)
-    const payments = await dbService.getPaymentsForTask(taskId)
-    const auditLogs = await dbService.getAuditLogs(taskId)
-
+  private async generateKeyPair(): Promise<{ publicKey: string; privateKey: string }> {
+    const keyPair = PrivateKey.generateECDSA()
     return {
-      task,
-      scores,
-      payments,
-      auditLogs,
-      progress: {
-        currentRound: task.currentRound,
-        maxRounds: task.maxRounds,
-        totalScores: scores.length,
-        completedPayments: payments.filter(p => p.status === 'settled').length,
-        totalPayments: payments.length,
-      },
+      publicKey: keyPair.publicKey.toString(),
+      privateKey: keyPair.toString()
     }
+  }
+
+  /**
+   * Encrypt private key for storage
+   */
+  private async encryptPrivateKey(privateKey: string): Promise<string> {
+    try {
+      const encrypted = CryptoJS.AES.encrypt(privateKey, this.encryptionKey).toString()
+      return encrypted
+    } catch (error) {
+      console.error('❌ Failed to encrypt private key:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Decrypt private key (for internal use)
+   */
+  private async decryptPrivateKey(encryptedPrivateKey: string): Promise<string> {
+    try {
+      const decrypted = CryptoJS.AES.decrypt(encryptedPrivateKey, this.encryptionKey).toString(CryptoJS.enc.Utf8)
+      return decrypted
+    } catch (error) {
+      console.error('❌ Failed to decrypt private key:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Save orchestrator to database
+   */
+  private async saveOrchestrator(data: {
+    id: string
+    userAddress: string
+    systemPrompt: string
+    config: string
+    status: string
+  }): Promise<void> {
+    try {
+      await this.prisma.orchestrator.create({
+        data: {
+          id: data.id,
+          userAddress: data.userAddress,
+          systemPrompt: data.systemPrompt,
+          config: data.config,
+          status: data.status
+        }
+      })
+      console.log(`✅ Orchestrator saved to database`)
+    } catch (error) {
+      console.error('❌ Failed to save orchestrator:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Save AA wallet to database
+   */
+  private async saveAAWallet(data: {
+    id: string
+    orchestratorId: string
+    address: string
+    accountId: string
+    publicKey: string
+    privateKeyEncrypted: string
+    isActive: boolean
+  }): Promise<void> {
+    try {
+      await this.prisma.aAWallet.create({
+        data: {
+          id: data.id,
+          orchestratorId: data.orchestratorId,
+          address: data.address,
+          accountId: data.accountId,
+          publicKey: data.publicKey,
+          privateKeyEncrypted: data.privateKeyEncrypted,
+          isActive: data.isActive
+        }
+      })
+      console.log(`✅ AA wallet saved to database`)
+    } catch (error) {
+      console.error('❌ Failed to save AA wallet:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get orchestrator from database
+   */
+  private async getOrchestrator(orchestratorId: string): Promise<any> {
+    try {
+      return await this.prisma.orchestrator.findUnique({
+        where: { id: orchestratorId }
+      })
+    } catch (error) {
+      console.error('❌ Failed to get orchestrator:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get AA wallet from database
+   */
+  private async getAAWallet(orchestratorId: string): Promise<any> {
+    try {
+      return await this.prisma.aAWallet.findFirst({
+        where: { 
+          orchestratorId: orchestratorId,
+          isActive: true
+        }
+      })
+    } catch (error) {
+      console.error('❌ Failed to get AA wallet:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Update wallet last used timestamp
+   */
+  private async updateWalletLastUsed(orchestratorId: string): Promise<void> {
+    try {
+      await this.prisma.aAWallet.updateMany({
+        where: { orchestratorId: orchestratorId },
+        data: { lastUsed: new Date() }
+      })
+      console.log(`✅ Wallet last used timestamp updated`)
+    } catch (error) {
+      console.error('❌ Failed to update wallet timestamp:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Close client connection
+   */
+  close() {
+    this.client.close()
   }
 }
 

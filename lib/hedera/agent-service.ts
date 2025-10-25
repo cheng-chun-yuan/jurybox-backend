@@ -8,6 +8,7 @@ import {
   AccountId,
   PrivateKey,
   AccountCreateTransaction,
+  AccountInfoQuery,
   Hbar,
   TransferTransaction,
   TopicCreateTransaction,
@@ -31,7 +32,9 @@ export class HederaAgentService {
     }
 
     this.operatorAccountId = AccountId.fromString(accountIdStr)
-    this.operatorPrivateKey = PrivateKey.fromString(privateKeyStr)
+    
+    // Use ECDSA hex encoded private key format (keep 0x prefix)
+    this.operatorPrivateKey = PrivateKey.fromStringECDSA(privateKeyStr)
 
     this.client = Client.forTestnet().setOperator(
       this.operatorAccountId,
@@ -154,9 +157,10 @@ export class HederaAgentService {
    */
   async getAccountBalance(accountId: string): Promise<number> {
     try {
-      const balance = await this.client
-        .getAccountBalance(AccountId.fromString(accountId))
-      return balance.hbars.toTinybars().toNumber() / 100_000_000 // Convert to HBAR
+      const accountInfo = await new AccountInfoQuery()
+        .setAccountId(AccountId.fromString(accountId))
+        .execute(this.client)
+      return accountInfo.balance.toTinybars().toNumber() / 100_000_000 // Convert to HBAR
     } catch (error) {
       console.error('Error getting balance:', error)
       throw error
@@ -197,6 +201,13 @@ export class HederaAgentService {
       agent.hederaAccount.accountId,
       amount
     )
+  }
+
+  /**
+   * Get the Hedera client
+   */
+  getClient(): Client {
+    return this.client
   }
 
   /**

@@ -4,13 +4,21 @@
  */
 
 export interface AgentMetadata {
+  type: string
   name: string
-  title: string
   description?: string
-  capabilities: string[]
-  hederaAccount?: string
-  createdAt: number
-  version?: string
+  image?: string
+  endpoints?: Array<{
+    name: string
+    endpoint: string
+    version?: string
+    capabilities?: any
+  }>
+  registrations?: Array<{
+    agentId?: number
+    agentRegistry: string
+  }>
+  supportedTrust?: string[]
 }
 
 export class PinataService {

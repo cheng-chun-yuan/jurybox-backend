@@ -53,11 +53,8 @@ export class HCSCommunicationService {
       maxRounds: number
     }
   ): Promise<string> {
-    const memo = JSON.stringify({
-      evaluationId,
-      ...metadata,
-      createdAt: Date.now(),
-    })
+    // Create a shorter memo to avoid MEMO_TOO_LONG error
+    const memo = `eval-${evaluationId}-${metadata.numberOfAgents}agents`
 
     const topicId = await this.hederaService.createAgentTopic(memo)
     console.log(`Created evaluation topic: ${topicId} for ${evaluationId}`)
@@ -97,7 +94,7 @@ export class HCSCommunicationService {
 
     const subscription = query.subscribe(
       this.hederaService['client'],
-      (error: Error | null, topicMessage: TopicMessage | null) => {
+      (topicMessage: TopicMessage | null, error: Error | null) => {
         if (error) {
           console.error('Error receiving topic message:', error)
           return
@@ -156,7 +153,7 @@ export class HCSCommunicationService {
 
       query.subscribe(
         this.hederaService['client'],
-        (error: Error | null, topicMessage: TopicMessage | null) => {
+        (topicMessage: TopicMessage | null, error: Error | null) => {
           if (error) {
             reject(error)
             return
