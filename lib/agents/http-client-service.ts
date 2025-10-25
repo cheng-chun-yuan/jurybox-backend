@@ -7,6 +7,7 @@
 import { Wallet } from 'ethers'
 import { processPayment, x402Utils, type PaymentPayload, type PaymentRequirements } from 'a2a-x402'
 import type { Agent } from '../../types/agent'
+import { normalizeToEvmAddress } from '../hedera/address-utils'
 
 export interface AgentHTTPRequest {
   content: string
@@ -38,18 +39,20 @@ export class AgentHTTPClient {
   private utils: x402Utils
   private orchestratorPrivateKey: string
   private orchestratorAccountId: string
+  private orchestratorEvmAddress: string
   private baseUrl: string
 
   constructor() {
     this.utils = new x402Utils()
 
-    // Use HEDERA_ACCOUNT_ID_2 for all orchestrator payments
-    this.orchestratorPrivateKey = process.env.HEDERA_PRIVATE_KEY_2 || ''
-    this.orchestratorAccountId = process.env.HEDERA_ACCOUNT_ID_2 || ''
+    // Use orchestrator credentials for all coordinator payments
+    this.orchestratorPrivateKey = process.env.ORCHESTRATOR_PRIVATE_KEY || ''
+    this.orchestratorAccountId = process.env.ORCHESTRATOR_ACCOUNT_ID || ''
+    this.orchestratorEvmAddress = process.env.ORCHESTRATOR_EVM_ADDRESS || ''
     this.baseUrl = process.env.API_BASE_URL || 'http://localhost:10000'
 
-    if (!this.orchestratorPrivateKey || !this.orchestratorAccountId) {
-      throw new Error('HEDERA_ACCOUNT_ID_2 and HEDERA_PRIVATE_KEY_2 must be configured')
+    if (!this.orchestratorPrivateKey || !this.orchestratorAccountId || !this.orchestratorEvmAddress) {
+      throw new Error('ORCHESTRATOR_ACCOUNT_ID, ORCHESTRATOR_PRIVATE_KEY, and ORCHESTRATOR_EVM_ADDRESS must be configured')
     }
   }
 
@@ -115,24 +118,35 @@ export class AgentHTTPClient {
     paymentRequired: X402PaymentRequired
   ): Promise<PaymentPayload> {
     try {
-      console.log('🔑 Signing payment with HEDERA_ACCOUNT_ID_2...')
-      console.log(`   From: ${this.orchestratorAccountId}`)
-      console.log(`   To: ${paymentRequired.paymentRequired.payToAddress}`)
+      // Use EVM addresses from environment variables
+      const toEvmAddress = paymentRequired.paymentRequired.payToAddress
+
+      console.log('🔑 Signing payment with ORCHESTRATOR_EVM_ADDRESS...')
+      console.log(`   From: ${this.orchestratorAccountId} (${this.orchestratorEvmAddress})`)
+      console.log(`   To: ${toEvmAddress}`)
       console.log(`   Amount: ${paymentRequired.paymentRequired.price}`)
 
       // Create ethers wallet from private key (required by a2a-x402)
       const wallet = new Wallet(this.orchestratorPrivateKey)
 
-      // Create payment requirements from 402 response
+      // Convert HBAR amount to tinybars (1 HBAR = 100,000,000 tinybars)
+      const hbarAmount = parseFloat(paymentRequired.paymentRequired.maxAmountRequired || '0.025')
+      const tinybars = Math.floor(hbarAmount * 100_000_000).toString()
+
+      // Create payment requirements from 402 response (use EVM addresses)
       const paymentRequirements: PaymentRequirements = {
-        network: paymentRequired.paymentRequired.network || 'hedera:testnet',
-        maxAmountRequired: paymentRequired.paymentRequired.maxAmountRequired || '0.025',
-        recipient: paymentRequired.paymentRequired.payToAddress,
-        paymentMethods: ['hedera'],
-        currency: 'HBAR',
+        scheme: 'x402',
+        network: (paymentRequired.paymentRequired.network || 'hedera:testnet') as any,
+        // For native HBAR, use the Hedera native token contract address
+        // In production, this would be the wrapped HBAR ERC-20 token address
+        asset: '0x0000000000000000000000000000000000000000', // Native HBAR (zero address represents native token)
+        payTo: toEvmAddress, // Recipient EVM address
+        maxAmountRequired: tinybars, // Amount in tinybars (smallest unit)
         resource: paymentRequired.paymentRequired.resource,
-        description: paymentRequired.paymentRequired.description
-      } as PaymentRequirements
+        description: paymentRequired.paymentRequired.description,
+        mimeType: 'application/json',
+        maxTimeoutSeconds: 60
+      }
 
       // Sign the payment using x402 protocol
       const paymentPayload = await processPayment(
@@ -228,6 +242,7 @@ export class AgentHTTPClient {
   getOrchestratorInfo() {
     return {
       accountId: this.orchestratorAccountId,
+      evmAddress: this.orchestratorEvmAddress,
       // Don't expose private key in logs
       hasPrivateKey: !!this.orchestratorPrivateKey
     }

@@ -90,7 +90,11 @@ export class HederaAgentService {
     amount: number
   ): Promise<string> {
     try {
-      const senderKey = PrivateKey.fromString(fromPrivateKey)
+      // Use ECDSA format for hex-encoded keys (with 0x prefix)
+      // Fallback to auto-detect for other formats
+      const senderKey = fromPrivateKey.startsWith('0x')
+        ? PrivateKey.fromStringECDSA(fromPrivateKey)
+        : PrivateKey.fromString(fromPrivateKey)
 
       const transaction = new TransferTransaction()
         .addHbarTransfer(AccountId.fromString(fromAccountId), new Hbar(-amount))

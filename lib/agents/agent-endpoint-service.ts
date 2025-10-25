@@ -95,7 +95,8 @@ export class AgentEndpointService {
    */
   private requirePayment(agent: Agent): PaymentRequiredError {
     const price = `${agent.paymentConfig.pricePerJudgment} HBAR`
-    const payToAddress = agent.paymentConfig.paymentAddress
+    // Use AGENT_EVM_ADDRESS as the payment recipient
+    const payToAddress = process.env.AGENT_EVM_ADDRESS || agent.paymentConfig.paymentAddress
     const resource = `/api/agents/${agent.id}/chat`
     const description = `Agent evaluation service - ${agent.name}`
 
@@ -116,13 +117,24 @@ export class AgentEndpointService {
    * Create payment requirements for agent
    */
   private createPaymentRequirements(agent: Agent): PaymentRequirements {
+    // Convert HBAR to tinybars (1 HBAR = 100,000,000 tinybars)
+    const tinybars = Math.floor(agent.paymentConfig.pricePerJudgment * 100_000_000).toString()
+
+    // Use AGENT_EVM_ADDRESS as the payment recipient
+    const payToAddress = process.env.AGENT_EVM_ADDRESS || agent.paymentConfig.paymentAddress
+
     return {
-      network: 'hedera:testnet',
-      maxAmountRequired: agent.paymentConfig.pricePerJudgment.toString(),
-      recipient: agent.paymentConfig.paymentAddress,
-      paymentMethods: ['hedera'],
-      currency: 'HBAR'
-    } as PaymentRequirements
+      scheme: 'x402',
+      network: 'hedera:testnet' as any,
+      // For native HBAR, use zero address (represents native token in EVM)
+      asset: '0x0000000000000000000000000000000000000000',
+      payTo: payToAddress, // Recipient EVM address from env
+      maxAmountRequired: tinybars, // Amount in tinybars (smallest unit)
+      resource: `/api/agents/${agent.id}/chat`,
+      description: `Agent evaluation service - ${agent.name}`,
+      mimeType: 'application/json',
+      maxTimeoutSeconds: 60
+    }
   }
 
   /**

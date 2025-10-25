@@ -4,7 +4,7 @@
  * Following the a2a-x402 library best practices
  */
 
-import { 
+import {
   x402PaymentRequiredException,
   processPayment,
   verifyPayment,
@@ -19,6 +19,7 @@ import {
   type x402PaymentRequiredResponse
 } from 'a2a-x402'
 import { Wallet } from 'ethers'
+import { createMockRelayerFacilitator } from './mock-relayer-facilitator'
 
 export interface PaymentRequest {
   amount: number
@@ -373,7 +374,22 @@ let paymentService: X402PaymentService | null = null
 
 export function getX402Service(): X402PaymentService {
   if (!paymentService) {
-    paymentService = new X402PaymentService()
+    // Use Mock Relayer Facilitator for Hedera transaction relaying
+    // This facilitator verifies payment signatures and simulates Hedera transfers
+    const useMockRelayer = process.env.USE_MOCK_RELAYER !== 'false' // Default to true
+
+    if (useMockRelayer) {
+      console.log('🔧 Using Mock Relayer Facilitator for X402 payments')
+      const mockRelayer = createMockRelayerFacilitator()
+      paymentService = new X402PaymentService()
+      // Override the facilitator with our mock relayer
+      paymentService['facilitator'] = mockRelayer
+    } else {
+      // Use external facilitator (for production)
+      paymentService = new X402PaymentService({
+        url: process.env.X402_FACILITATOR_URL || 'https://jurybox-facilitator.example.com'
+      })
+    }
   }
   return paymentService
 }
