@@ -194,6 +194,33 @@ export interface EvaluationTranscript {
   }>
 }
 
+// Agent HTTP chat types for X402 payment protocol
+export interface AgentChatRequest {
+  content: string
+  criteria?: string[]
+  metadata?: Record<string, any>
+}
+
+export interface AgentChatResponse {
+  score: number
+  reasoning: string
+  confidence: number
+  aspects?: Record<string, number>
+  paymentTx?: string // X402 payment transaction ID
+}
+
+export interface X402PaymentRequired {
+  error: string
+  paymentRequired: {
+    price: string
+    payToAddress: string
+    resource: string
+    description: string
+    network?: string
+    maxAmountRequired?: string
+  }
+}
+
 // Orchestrator output structure
 export interface OrchestratorOutput {
   requestId: string

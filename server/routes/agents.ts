@@ -1,8 +1,11 @@
 import { FastifyPluginAsync } from 'fastify'
 import { getViemRegistryService } from '../../lib/erc8004/viem-registry-service'
 import { getHederaService } from '../../lib/hedera/agent-service'
+import { getAgentEndpointService, type AgentChatRequest } from '../../lib/agents/agent-endpoint-service'
+import { getDatabase } from '../../lib/database'
 import type { AgentMetadata } from '../../lib/ipfs/pinata-service'
 import { CONTRACT_ADDRESSES } from '../../lib/erc8004/contract-addresses'
+import type { PaymentPayload } from 'a2a-x402'
 
 const agentsRoutes: FastifyPluginAsync = async (fastify) => {
   // Schema definitions for validation
@@ -141,6 +144,136 @@ const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(500).send({
         error: 'Failed to get agent',
         message: error.message,
+      })
+    }
+  })
+
+  /**
+   * Agent chat endpoint with X402 payment support
+   * POST /api/agents/:agentId/chat
+   *
+   * Returns 402 if no payment provided
+   * Returns evaluation result if valid payment received
+   */
+  fastify.post<{
+    Params: { agentId: string }
+    Body: AgentChatRequest
+  }>('/:agentId/chat', async (request, reply) => {
+    try {
+      const { agentId } = request.params
+      const chatRequest = request.body
+
+      // Get agent from database
+      const db = getDatabase()
+      const dbAgent = await db.agent.findUnique({
+        where: { id: parseInt(agentId) }
+      })
+
+      if (!dbAgent) {
+        return reply.status(404).send({
+          error: 'Agent not found',
+          message: `Agent with ID ${agentId} does not exist`
+        })
+      }
+
+      // Map database agent to Agent type
+      const agent = {
+        id: dbAgent.id.toString(),
+        name: dbAgent.name,
+        title: dbAgent.name,
+        tagline: dbAgent.bio || '',
+        bio: dbAgent.bio || '',
+        avatar: dbAgent.avatar || '',
+        color: (dbAgent.color || 'purple') as 'purple' | 'cyan' | 'gold',
+        hederaAccount: {
+          accountId: dbAgent.accountId,
+          publicKey: '',
+          balance: 0
+        },
+        paymentConfig: {
+          enabled: true,
+          acceptedTokens: ['HBAR'],
+          pricePerJudgment: dbAgent.fee,
+          paymentAddress: dbAgent.payToAddress || '0x3acfa47617c313Fae5F27D7e7128578fCEf5ED94',
+          minimumPayment: dbAgent.fee
+        },
+        identity: {
+          registryId: '',
+          agentId: dbAgent.id.toString(),
+          verified: false,
+          registeredAt: dbAgent.createdAt.getTime()
+        },
+        reputation: {
+          totalReviews: 0,
+          averageRating: dbAgent.reputation,
+          completedJudgments: 0,
+          successRate: 1.0,
+          lastUpdated: Date.now()
+        },
+        capabilities: {
+          specialties: JSON.parse(dbAgent.specialties || '[]'),
+          languages: ['en'],
+          modelProvider: 'openai' as const,
+          modelName: 'gpt-4',
+          systemPrompt: dbAgent.bio || '',
+          temperature: 0.7,
+          maxTokens: 2000
+        },
+        createdBy: '',
+        createdAt: dbAgent.createdAt.getTime(),
+        updatedAt: dbAgent.updatedAt.getTime(),
+        isActive: true,
+        trending: dbAgent.trending || false
+      }
+
+      // Check for payment payload in header
+      const paymentPayloadHeader = request.headers['x-payment-payload']
+      let paymentPayload: PaymentPayload | undefined
+
+      if (paymentPayloadHeader) {
+        try {
+          paymentPayload = typeof paymentPayloadHeader === 'string'
+            ? JSON.parse(paymentPayloadHeader)
+            : paymentPayloadHeader
+          console.log('📦 Received payment payload from header')
+        } catch (error) {
+          return reply.status(400).send({
+            error: 'Invalid payment payload',
+            message: 'Failed to parse X-Payment-Payload header'
+          })
+        }
+      }
+
+      // Validate request
+      const agentEndpointService = getAgentEndpointService()
+      const validation = agentEndpointService.validateRequest(chatRequest)
+      if (!validation.valid) {
+        return reply.status(400).send({
+          error: 'Invalid request',
+          message: validation.error
+        })
+      }
+
+      // Handle chat request with X402 payment
+      const result = await agentEndpointService.handleChatRequest(
+        agent,
+        chatRequest,
+        paymentPayload
+      )
+
+      // Check if result is payment required error
+      if ('paymentRequired' in result) {
+        return reply.status(402).send(result)
+      }
+
+      // Return successful evaluation
+      return reply.status(200).send(result)
+
+    } catch (error: any) {
+      fastify.log.error('Agent chat error:', error)
+      return reply.status(500).send({
+        error: 'Agent chat failed',
+        message: error.message
       })
     }
   })

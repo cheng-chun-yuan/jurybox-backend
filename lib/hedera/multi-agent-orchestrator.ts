@@ -20,6 +20,7 @@ import { ConsensusAlgorithms } from './consensus-algorithms'
 import { getX402Service } from '../x402/payment-service'
 import { getViemRegistryService } from '../erc8004/viem-registry-service'
 import { getOpenAIService } from '../ai/openai-service'
+import { getAgentHTTPClient } from '../agents/http-client-service'
 
 // Remove duplicate interfaces - they're now imported from types/agent.ts
 
@@ -28,6 +29,7 @@ export class MultiAgentOrchestrator {
   private x402Service = getX402Service()
   private registryService = getViemRegistryService()
   private openAIService = getOpenAIService()
+  private agentHTTPClient = getAgentHTTPClient()
 
   /**
    * Execute complete multi-agent evaluation workflow
@@ -415,7 +417,7 @@ export class MultiAgentOrchestrator {
   }
 
   /**
-   * Execute individual agent evaluation using AI
+   * Execute individual agent evaluation using HTTP with X402 payment
    */
   private async executeAgentEvaluation(
     agent: Agent,
@@ -423,15 +425,32 @@ export class MultiAgentOrchestrator {
     criteria: string[]
   ): Promise<number> {
     try {
-      console.log(`  🤖 ${agent.name} is evaluating...`)
-      const result = await this.openAIService.evaluateContent(agent, content, criteria)
+      console.log(`  🤖 ${agent.name} is evaluating via HTTP + X402...`)
+
+      // Call agent via HTTP with automatic X402 payment handling
+      const result = await this.agentHTTPClient.callAgent(agent, {
+        content,
+        criteria
+      })
+
       console.log(`  ✅ ${agent.name} scored: ${result.score.toFixed(2)}/10 (confidence: ${(result.confidence * 100).toFixed(1)}%)`)
+      if (result.paymentTx) {
+        console.log(`  💰 Payment TX: ${result.paymentTx}`)
+      }
+
       return result.score
     } catch (error) {
-      console.error(`  ❌ ${agent.name} evaluation failed, using fallback:`, error)
-      // Fallback to random score if OpenAI fails
-      const fallbackScore = 5 + Math.random() * 5
-      return Math.max(0, Math.min(10, fallbackScore))
+      console.error(`  ❌ ${agent.name} evaluation failed:`, error)
+      // Fallback to direct OpenAI if HTTP fails
+      try {
+        console.log(`  🔄 Falling back to direct OpenAI for ${agent.name}...`)
+        const fallbackResult = await this.openAIService.evaluateContent(agent, content, criteria)
+        return fallbackResult.score
+      } catch (fallbackError) {
+        console.error(`  ❌ Fallback also failed, using random score`)
+        const randomScore = 5 + Math.random() * 5
+        return Math.max(0, Math.min(10, randomScore))
+      }
     }
   }
 
