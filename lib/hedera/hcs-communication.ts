@@ -41,7 +41,6 @@ export class HCSCommunicationService {
   private hederaService = getHederaService()
   private subscriptions = new Map<string, any>()
   private messageHandlers = new Map<string, (message: AgentMessage) => void>()
-  private streamHandlers = new Map<string, Set<(message: AgentMessage) => void>>()
 
   /**
    * Create a new evaluation topic for agent communication
@@ -105,18 +104,6 @@ export class HCSCommunicationService {
 
           // Call the registered message handler
           onMessage(agentMessage)
-
-          // Emit to all stream handlers for this topic
-          const handlers = this.streamHandlers.get(topicId)
-          if (handlers) {
-            handlers.forEach(handler => {
-              try {
-                handler(agentMessage)
-              } catch (err) {
-                console.error('Error in stream handler:', err)
-              }
-            })
-          }
         } catch (err) {
           console.error('Error parsing topic message:', err)
         }
@@ -136,32 +123,7 @@ export class HCSCommunicationService {
       // Note: HCS subscriptions don't have explicit unsubscribe in SDK
       // They're automatically cleaned up when the query object is garbage collected
       this.subscriptions.delete(topicId)
-      this.streamHandlers.delete(topicId)
       console.log(`Unsubscribed from topic: ${topicId}`)
-    }
-  }
-
-  /**
-   * Register a stream handler for real-time message streaming to frontend
-   */
-  registerStreamHandler(topicId: string, handler: (message: AgentMessage) => void): void {
-    if (!this.streamHandlers.has(topicId)) {
-      this.streamHandlers.set(topicId, new Set())
-    }
-    this.streamHandlers.get(topicId)!.add(handler)
-    console.log(`Registered stream handler for topic: ${topicId}`)
-  }
-
-  /**
-   * Unregister a stream handler
-   */
-  unregisterStreamHandler(topicId: string, handler: (message: AgentMessage) => void): void {
-    const handlers = this.streamHandlers.get(topicId)
-    if (handlers) {
-      handlers.delete(handler)
-      if (handlers.size === 0) {
-        this.streamHandlers.delete(topicId)
-      }
     }
   }
 

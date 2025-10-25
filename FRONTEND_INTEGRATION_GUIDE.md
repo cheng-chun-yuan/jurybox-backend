@@ -1,37 +1,50 @@
-# Frontend Integration Guide for HCS Topic Streaming
+# Frontend Integration Guide - HCS Direct Subscription
 
 ## Overview
 
-This guide shows you how to integrate real-time Hedera Consensus Service (HCS) topic streaming into your frontend application. You have two options:
+This guide shows you how to integrate real-time Hedera Consensus Service (HCS) topic streaming directly into your frontend application. Your frontend will subscribe directly to Hedera's public mirror nodes, eliminating backend overhead and achieving better scalability.
 
-1. **Server-Sent Events (SSE)** - Simple, uses existing backend endpoint
-2. **Direct Hedera Subscription** - Better performance, no backend overhead
+## Why Direct Subscription?
 
-## Quick Comparison
-
-| Feature | SSE Approach | Direct Hedera Approach |
-|---------|-------------|----------------------|
-| **Setup Complexity** | ⭐ Easy | ⭐⭐ Medium |
-| **Dependencies** | None | @hashgraph/sdk (~2MB) |
-| **Backend Load** | High (one connection per client) | None |
-| **Latency** | Medium (proxied) | Low (direct) |
-| **Scalability** | Limited by backend | Unlimited |
-| **Best For** | Quick demos, prototypes | Production apps |
+✅ **No Backend Overhead** - Backend doesn't maintain connections
+✅ **Unlimited Scalability** - Each client connects directly to Hedera
+✅ **Lower Latency** - Direct to mirror node, no proxy delay
+✅ **Backend Focus** - Your backend can focus on orchestrator processing
+✅ **Free & Public** - Reading HCS topics requires no credentials or fees
 
 ---
 
-## Option 1: Server-Sent Events (SSE)
+## Prerequisites
 
-### When to Use
-- Quick prototypes or demos
-- Don't want to add Hedera SDK dependency
-- Simple implementation needed
-- Low number of concurrent users
+### 1. Install Hedera SDK
 
-### Step 1: Start Evaluation and Get Topic ID
+```bash
+npm install @hashgraph/sdk
+# or
+yarn add @hashgraph/sdk
+# or
+pnpm add @hashgraph/sdk
+```
+
+**Bundle size:** ~2MB (acceptable for most production apps)
+
+### 2. No Private Keys Needed!
+
+Reading from HCS topics is completely public:
+- No Hedera account required
+- No private keys in frontend
+- No authentication needed
+- Just connect and subscribe
+
+---
+
+## Quick Start
+
+### Step 1: Get Topic ID from Backend
+
+Call your backend to start an evaluation and receive the topicId:
 
 ```typescript
-// Call your backend to start evaluation
 const response = await fetch('http://localhost:10000/orchestrator/test', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -47,217 +60,9 @@ const result = await response.json();
 const topicId = result.topicId; // e.g., "0.0.12345"
 ```
 
-### Step 2: Connect to SSE Stream
+### Step 2: Subscribe Directly to Hedera
 
-**Vanilla JavaScript:**
-```typescript
-const eventSource = new EventSource(
-  `http://localhost:10000/orchestrator/stream/${topicId}`
-);
-
-eventSource.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.type === 'connected') {
-    console.log('✅ Connected to topic:', message.topicId);
-  } else if (message.type === 'message') {
-    handleAgentMessage(message.data);
-  } else if (message.type === 'error') {
-    console.error('❌ Error:', message.message);
-  }
-};
-
-eventSource.onerror = (error) => {
-  console.error('Connection error:', error);
-  eventSource.close();
-};
-
-// Cleanup when done
-function cleanup() {
-  eventSource.close();
-}
-```
-
-**React Hook:**
-```typescript
-import { useEffect, useState } from 'react';
-
-interface AgentMessage {
-  type: 'score' | 'discussion' | 'adjustment' | 'final';
-  agentId: string;
-  agentName: string;
-  timestamp: number;
-  roundNumber: number;
-  data: any;
-}
-
-export function useSSEStream(topicId: string | null) {
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!topicId) return;
-
-    const eventSource = new EventSource(
-      `http://localhost:10000/orchestrator/stream/${topicId}`
-    );
-
-    eventSource.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-
-      if (message.type === 'connected') {
-        setIsConnected(true);
-      } else if (message.type === 'message') {
-        setMessages(prev => [...prev, message.data]);
-      } else if (message.type === 'error') {
-        setError(message.message);
-      }
-    };
-
-    eventSource.onerror = () => {
-      setIsConnected(false);
-      setError('Connection error');
-    };
-
-    return () => {
-      eventSource.close();
-      setIsConnected(false);
-    };
-  }, [topicId]);
-
-  return { messages, isConnected, error };
-}
-
-// Usage in component
-function EvaluationMonitor({ topicId }: { topicId: string }) {
-  const { messages, isConnected, error } = useSSEStream(topicId);
-
-  return (
-    <div>
-      <div>Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}</div>
-      {error && <div>Error: {error}</div>}
-
-      <div>
-        {messages.map((msg, idx) => (
-          <div key={idx}>
-            <strong>{msg.agentName}</strong> ({msg.type}):
-            Score: {msg.data.score}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-```
-
-**Vue 3 Composable:**
-```typescript
-import { ref, onMounted, onUnmounted } from 'vue';
-
-export function useSSEStream(topicId: string) {
-  const messages = ref<any[]>([]);
-  const isConnected = ref(false);
-  const error = ref<string | null>(null);
-  let eventSource: EventSource | null = null;
-
-  onMounted(() => {
-    eventSource = new EventSource(
-      `http://localhost:10000/orchestrator/stream/${topicId}`
-    );
-
-    eventSource.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-
-      if (message.type === 'connected') {
-        isConnected.value = true;
-      } else if (message.type === 'message') {
-        messages.value.push(message.data);
-      } else if (message.type === 'error') {
-        error.value = message.message;
-      }
-    };
-
-    eventSource.onerror = () => {
-      isConnected.value = false;
-      error.value = 'Connection error';
-    };
-  });
-
-  onUnmounted(() => {
-    eventSource?.close();
-  });
-
-  return { messages, isConnected, error };
-}
-```
-
-### Step 3: Handle Message Types
-
-```typescript
-function handleAgentMessage(message: AgentMessage) {
-  switch (message.type) {
-    case 'score':
-      // Initial agent scoring
-      console.log(`${message.agentName} scored: ${message.data.score}`);
-      updateScoreUI(message);
-      break;
-
-    case 'discussion':
-      // Agent discussion/deliberation
-      console.log(`${message.agentName}: ${message.data.discussion}`);
-      addDiscussionToUI(message);
-      break;
-
-    case 'adjustment':
-      // Score adjustment after discussion
-      console.log(`${message.agentName} adjusted: ${message.data.originalScore} → ${message.data.adjustedScore}`);
-      updateAdjustedScore(message);
-      break;
-
-    case 'final':
-      // Final consensus result
-      console.log(`Final score: ${message.data.score}`);
-      showFinalResult(message);
-      break;
-  }
-}
-```
-
----
-
-## Option 2: Direct Hedera Subscription (Recommended)
-
-### When to Use
-- Production applications
-- Need to scale to many users
-- Want minimal latency
-- Backend should focus on processing
-
-### Advantages
-✅ No backend connection overhead
-✅ Scales to unlimited clients
-✅ Lower latency (direct to Hedera)
-✅ Backend continues processing independently
-✅ Reading HCS topics is free and public
-
-### Step 1: Install Hedera SDK
-
-```bash
-npm install @hashgraph/sdk
-# or
-yarn add @hashgraph/sdk
-# or
-pnpm add @hashgraph/sdk
-```
-
-### Step 2: Start Evaluation and Get Topic ID
-
-Same as SSE approach - call `/orchestrator/test` to get `topicId`.
-
-### Step 3: Subscribe Directly to Hedera
-
-**Vanilla JavaScript/TypeScript:**
+**TypeScript/JavaScript:**
 ```typescript
 import {
   TopicMessageQuery,
@@ -266,21 +71,19 @@ import {
   TopicMessage
 } from '@hashgraph/sdk';
 
-// Create client (no private key needed for reading!)
+// Create client (no private key needed!)
 const client = Client.forTestnet();
 
 // Optional: Set custom mirror node
 client.setMirrorNetwork(['testnet.mirrornode.hedera.com:443']);
 
 // Subscribe to topic
-const topicId = '0.0.12345'; // From backend response
-
 const subscription = new TopicMessageQuery()
   .setTopicId(TopicId.fromString(topicId))
   .setStartTime(new Date(Date.now() - 60000)) // Start from 1 min ago
   .subscribe(
     client,
-    null, // No error callback needed
+    null,
     (message: TopicMessage) => {
       // Parse message
       const content = Buffer.from(message.contents).toString('utf8');
@@ -298,7 +101,12 @@ function cleanup() {
 }
 ```
 
-**React Hook:**
+---
+
+## Framework Integration
+
+### React Hook
+
 ```typescript
 import { useEffect, useState, useRef } from 'react';
 import { TopicMessageQuery, TopicId, Client } from '@hashgraph/sdk';
@@ -309,7 +117,16 @@ interface AgentMessage {
   agentName: string;
   timestamp: number;
   roundNumber: number;
-  data: any;
+  data: {
+    score?: number;
+    reasoning?: string;
+    originalScore?: number;
+    adjustedScore?: number;
+    confidence?: number;
+    aspects?: Record<string, number>;
+    discussion?: string;
+    replyTo?: string;
+  };
 }
 
 export function useHederaStream(topicId: string | null) {
@@ -368,20 +185,31 @@ export function useHederaStream(topicId: string | null) {
   return { messages, isConnected, error };
 }
 
-// Usage
+// Usage in component
 function EvaluationMonitor({ topicId }: { topicId: string }) {
   const { messages, isConnected, error } = useHederaStream(topicId);
 
+  if (error) {
+    return <div>Error: {error}</div>;
+  }
+
   return (
     <div>
-      <div>Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}</div>
-      {error && <div>Error: {error}</div>}
+      <div>
+        Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+      </div>
 
       <div>
+        <h3>Messages:</h3>
         {messages.map((msg, idx) => (
           <div key={idx}>
-            <strong>{msg.agentName}</strong> ({msg.type}):
-            Score: {msg.data.score}
+            <strong>{msg.agentName}</strong> ({msg.type}) - Round {msg.roundNumber}
+            {msg.type === 'score' && <span>: Score {msg.data.score}</span>}
+            {msg.type === 'discussion' && <span>: {msg.data.discussion}</span>}
+            {msg.type === 'adjustment' && (
+              <span>: {msg.data.originalScore} → {msg.data.adjustedScore}</span>
+            )}
+            {msg.type === 'final' && <span>: Final {msg.data.score}</span>}
           </div>
         ))}
       </div>
@@ -390,13 +218,23 @@ function EvaluationMonitor({ topicId }: { topicId: string }) {
 }
 ```
 
-**Vue 3 Composable:**
+### Vue 3 Composable
+
 ```typescript
 import { ref, onMounted, onUnmounted } from 'vue';
 import { TopicMessageQuery, TopicId, Client } from '@hashgraph/sdk';
 
+interface AgentMessage {
+  type: 'score' | 'discussion' | 'adjustment' | 'final';
+  agentId: string;
+  agentName: string;
+  timestamp: number;
+  roundNumber: number;
+  data: any;
+}
+
 export function useHederaStream(topicId: string) {
-  const messages = ref<any[]>([]);
+  const messages = ref<AgentMessage[]>([]);
   const isConnected = ref(false);
   const error = ref<string | null>(null);
 
@@ -440,11 +278,74 @@ export function useHederaStream(topicId: string) {
 }
 ```
 
+### Vanilla JavaScript
+
+```javascript
+import {
+  TopicMessageQuery,
+  TopicId,
+  Client
+} from '@hashgraph/sdk';
+
+class HederaStreamService {
+  constructor() {
+    this.client = null;
+    this.subscription = null;
+    this.onMessageCallback = null;
+  }
+
+  async connect(topicId, onMessage) {
+    this.onMessageCallback = onMessage;
+
+    // Create client
+    this.client = Client.forTestnet();
+    this.client.setMirrorNetwork(['testnet.mirrornode.hedera.com:443']);
+
+    // Subscribe
+    this.subscription = new TopicMessageQuery()
+      .setTopicId(TopicId.fromString(topicId))
+      .setStartTime(new Date(Date.now() - 60000))
+      .subscribe(
+        this.client,
+        null,
+        (message) => {
+          try {
+            const content = Buffer.from(message.contents).toString('utf8');
+            const agentMessage = JSON.parse(content);
+            this.onMessageCallback(agentMessage);
+          } catch (err) {
+            console.error('Parse error:', err);
+          }
+        }
+      );
+
+    console.log('✅ Connected to topic:', topicId);
+  }
+
+  disconnect() {
+    this.subscription?.unsubscribe();
+    this.client?.close();
+    console.log('📴 Disconnected');
+  }
+}
+
+// Usage
+const streamService = new HederaStreamService();
+
+streamService.connect('0.0.12345', (message) => {
+  console.log('Received:', message);
+  updateUI(message);
+});
+
+// Later...
+streamService.disconnect();
+```
+
 ---
 
 ## Message Types Reference
 
-### Score Message
+### 1. Score Message (Initial Scoring)
 ```json
 {
   "type": "score",
@@ -458,13 +359,15 @@ export function useHederaStream(topicId: string) {
     "confidence": 0.9,
     "aspects": {
       "Accuracy": 9.0,
-      "Clarity": 8.0
+      "Clarity": 8.0,
+      "Completeness": 8.5,
+      "Relevance": 9.0
     }
   }
 }
 ```
 
-### Discussion Message
+### 2. Discussion Message
 ```json
 {
   "type": "discussion",
@@ -473,13 +376,13 @@ export function useHederaStream(topicId: string) {
   "timestamp": 1234567891,
   "roundNumber": 1,
   "data": {
-    "discussion": "I agree but consider...",
+    "discussion": "I agree with the technical assessment, but...",
     "replyTo": "agent-1"
   }
 }
 ```
 
-### Adjustment Message
+### 3. Adjustment Message
 ```json
 {
   "type": "adjustment",
@@ -490,12 +393,12 @@ export function useHederaStream(topicId: string) {
   "data": {
     "originalScore": 8.5,
     "adjustedScore": 8.7,
-    "reasoning": "After feedback..."
+    "reasoning": "After considering the feedback..."
   }
 }
 ```
 
-### Final Message
+### 4. Final Message (Consensus)
 ```json
 {
   "type": "final",
@@ -505,8 +408,57 @@ export function useHederaStream(topicId: string) {
   "roundNumber": 2,
   "data": {
     "score": 8.48,
-    "reasoning": "{\"evaluationId\":\"eval_123\",\"individualScores\":{...}}"
+    "reasoning": "{\"evaluationId\":\"eval_123\",\"individualScores\":{...},\"consensusAlgorithm\":\"weighted_average\",\"totalRounds\":2}"
   }
+}
+```
+
+---
+
+## Handling Messages
+
+### Basic Handler
+```typescript
+function handleAgentMessage(message: AgentMessage) {
+  switch (message.type) {
+    case 'score':
+      console.log(`${message.agentName} scored: ${message.data.score}`);
+      displayScore(message);
+      break;
+
+    case 'discussion':
+      console.log(`${message.agentName}: ${message.data.discussion}`);
+      addDiscussion(message);
+      break;
+
+    case 'adjustment':
+      console.log(
+        `${message.agentName} adjusted: ${message.data.originalScore} → ${message.data.adjustedScore}`
+      );
+      updateScore(message);
+      break;
+
+    case 'final':
+      console.log(`Final consensus: ${message.data.score}`);
+      showFinalResult(message);
+      break;
+  }
+}
+```
+
+### Group by Round
+```typescript
+function groupMessagesByRound(messages: AgentMessage[]) {
+  const rounds = new Map<number, AgentMessage[]>();
+
+  messages.forEach(msg => {
+    if (!rounds.has(msg.roundNumber)) {
+      rounds.set(msg.roundNumber, []);
+    }
+    rounds.get(msg.roundNumber)!.push(msg);
+  });
+
+  return Array.from(rounds.entries()).sort((a, b) => a[0] - b[0]);
 }
 ```
 
@@ -514,51 +466,74 @@ export function useHederaStream(topicId: string) {
 
 ## Complete Workflow Example
 
-### 1. Start Evaluation
 ```typescript
-const response = await fetch('http://localhost:10000/orchestrator/test', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    agentIds: [1, 2, 3],
-    maxRounds: 2,
-    content: 'Content to evaluate...'
-  })
-});
+import { useState, useEffect } from 'react';
+import { useHederaStream } from './useHederaStream';
 
-const { topicId, evaluationId } = await response.json();
-```
+function EvaluationWorkflow() {
+  const [topicId, setTopicId] = useState<string | null>(null);
+  const [evaluationId, setEvaluationId] = useState<string | null>(null);
+  const { messages, isConnected, error } = useHederaStream(topicId);
 
-### 2. Subscribe to Stream
-```typescript
-// Option A: SSE
-const eventSource = new EventSource(`http://localhost:10000/orchestrator/stream/${topicId}`);
+  // Step 1: Start evaluation
+  async function startEvaluation() {
+    const response = await fetch('http://localhost:10000/orchestrator/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentIds: [1, 2, 3],
+        maxRounds: 2,
+        consensusAlgorithm: 'weighted_average',
+        content: 'Content to evaluate...'
+      })
+    });
 
-// Option B: Direct Hedera
-const client = Client.forTestnet();
-new TopicMessageQuery()
-  .setTopicId(TopicId.fromString(topicId))
-  .subscribe(client, null, handleMessage);
-```
-
-### 3. Handle Messages in Real-Time
-```typescript
-function handleMessage(message: AgentMessage) {
-  // Update UI based on message type
-  if (message.type === 'score') {
-    updateAgentScore(message);
-  } else if (message.type === 'final') {
-    showFinalResult(message);
+    const result = await response.json();
+    setTopicId(result.topicId);
+    setEvaluationId(result.evaluationId);
   }
-}
-```
 
-### 4. Get Final Result
-```typescript
-const resultResponse = await fetch(
-  `http://localhost:10000/orchestrator/result/${evaluationId}`
-);
-const finalResult = await resultResponse.json();
+  // Step 2: Monitor messages (automatic via hook)
+
+  // Step 3: Detect completion
+  const isFinal = messages.some(msg => msg.type === 'final');
+
+  // Step 4: Fetch final result when done
+  useEffect(() => {
+    if (isFinal && evaluationId) {
+      fetchFinalResult();
+    }
+  }, [isFinal, evaluationId]);
+
+  async function fetchFinalResult() {
+    const response = await fetch(
+      `http://localhost:10000/orchestrator/result/${evaluationId}`
+    );
+    const finalResult = await response.json();
+    console.log('Final result:', finalResult);
+  }
+
+  return (
+    <div>
+      <button onClick={startEvaluation}>Start Evaluation</button>
+
+      {topicId && (
+        <div>
+          <p>Topic ID: {topicId}</p>
+          <p>Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}</p>
+
+          {messages.map((msg, idx) => (
+            <div key={idx}>
+              {msg.agentName}: {msg.type} - Round {msg.roundNumber}
+            </div>
+          ))}
+
+          {isFinal && <p>✅ Evaluation Complete!</p>}
+        </div>
+      )}
+    </div>
+  );
+}
 ```
 
 ---
@@ -566,69 +541,218 @@ const finalResult = await resultResponse.json();
 ## Best Practices
 
 ### Performance
-- **Reuse client instance** - Create once, use for multiple topics
-- **Filter messages** - Only process relevant roundNumbers
-- **Debounce UI updates** - Don't update on every message if too frequent
-- **Limit message history** - Clear old messages to save memory
+
+**1. Reuse Client Instance**
+```typescript
+// Good: Create once, reuse
+const client = Client.forTestnet();
+// Use for multiple subscriptions
+
+// Bad: Create new client for each subscription
+```
+
+**2. Filter Messages**
+```typescript
+// Only process relevant rounds
+if (message.roundNumber === currentRound) {
+  handleMessage(message);
+}
+```
+
+**3. Limit History**
+```typescript
+// Keep only last 100 messages
+setMessages(prev => {
+  const updated = [...prev, newMessage];
+  return updated.slice(-100);
+});
+```
+
+**4. Debounce UI Updates**
+```typescript
+import { debounce } from 'lodash';
+
+const debouncedUpdate = debounce((message) => {
+  updateUI(message);
+}, 100);
+```
 
 ### Error Handling
-- **Network errors** - Implement retry logic with exponential backoff
-- **Parse errors** - Catch JSON.parse errors, log and skip bad messages
-- **Connection loss** - Show disconnected state, attempt reconnection
-- **Invalid topic** - Validate topicId format before subscribing
+
+**1. Network Errors**
+```typescript
+try {
+  subscription = new TopicMessageQuery()
+    .setTopicId(TopicId.fromString(topicId))
+    .subscribe(client, null, handleMessage);
+} catch (error) {
+  console.error('Subscription failed:', error);
+  // Retry with exponential backoff
+  setTimeout(() => retrySubscription(), retryDelay);
+}
+```
+
+**2. Parse Errors**
+```typescript
+(message: TopicMessage) => {
+  try {
+    const content = Buffer.from(message.contents).toString('utf8');
+    const agentMessage = JSON.parse(content);
+    handleMessage(agentMessage);
+  } catch (error) {
+    console.error('Parse error:', error);
+    // Log and skip, don't crash
+  }
+}
+```
+
+**3. Validate Messages**
+```typescript
+function isValidMessage(msg: any): msg is AgentMessage {
+  return (
+    typeof msg.type === 'string' &&
+    ['score', 'discussion', 'adjustment', 'final'].includes(msg.type) &&
+    typeof msg.agentId === 'string' &&
+    typeof msg.agentName === 'string'
+  );
+}
+```
 
 ### Security
-- **Validate topicId** - Ensure it comes from your backend
-- **Sanitize content** - XSS prevention when displaying messages
-- **CORS** - Configure properly for your domain
-- **Rate limiting** - Implement if using SSE to prevent abuse
+
+**1. Validate Topic ID**
+```typescript
+// Ensure topicId comes from your backend
+function isValidTopicId(topicId: string): boolean {
+  return /^0\.0\.\d+$/.test(topicId);
+}
+```
+
+**2. Sanitize Display Content**
+```typescript
+import DOMPurify from 'dompurify';
+
+function displayMessage(message: AgentMessage) {
+  const clean = DOMPurify.sanitize(message.data.discussion || '');
+  element.innerHTML = clean;
+}
+```
+
+**3. CORS Configuration**
+Not needed! Direct Hedera subscription bypasses your backend entirely.
 
 ### UI/UX
-- **Show connection status** - Visual indicator (🟢/🔴)
-- **Loading states** - While waiting for messages
-- **Message grouping** - Group by roundNumber for clarity
-- **Auto-scroll** - To latest message
-- **Timestamp formatting** - Human-readable times
+
+**1. Connection Status**
+```tsx
+<div className={isConnected ? 'status-connected' : 'status-disconnected'}>
+  {isConnected ? '🟢 Live' : '🔴 Disconnected'}
+</div>
+```
+
+**2. Loading States**
+```tsx
+{messages.length === 0 && isConnected && (
+  <div>⏳ Waiting for messages...</div>
+)}
+```
+
+**3. Auto-scroll**
+```typescript
+const messagesEndRef = useRef<HTMLDivElement>(null);
+
+useEffect(() => {
+  messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+}, [messages]);
+```
+
+**4. Timestamp Formatting**
+```typescript
+function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString();
+}
+```
 
 ---
 
 ## Troubleshooting
 
-### SSE: Connection Keeps Dropping
-- Check backend logs for errors
-- Verify CORS headers
-- Check network/firewall settings
-- Increase timeout on backend if needed
+### No Messages Received
 
-### Direct Hedera: No Messages Received
-- Verify topicId format is correct (e.g., "0.0.12345")
-- Check startTime - may be too far in past/future
-- Confirm topic has messages (check backend logs)
-- Try different mirror node endpoint
+**Check 1: Topic ID Format**
+```typescript
+// Correct: "0.0.12345"
+// Incorrect: "0.0.12345.0" or "12345"
+```
 
-### Messages Arrive Out of Order
-- This is normal - Hedera delivers by consensus time
-- Sort by `timestamp` field if needed
-- Group by `roundNumber` for display
+**Check 2: Start Time**
+```typescript
+// Good: Recent time
+.setStartTime(new Date(Date.now() - 60000))
+
+// Bad: Too far in past (may timeout)
+.setStartTime(new Date(0))
+```
+
+**Check 3: Verify Topic Has Messages**
+Check backend logs to confirm messages are being submitted.
+
+### Connection Issues
+
+**Try Different Mirror Node:**
+```typescript
+// Testnet alternatives
+client.setMirrorNetwork([
+  'testnet.mirrornode.hedera.com:443',
+  'hcs.testnet.mirrornode.hedera.com:5600'
+]);
+```
+
+### Messages Out of Order
+
+This is normal! Hedera delivers by consensus timestamp, not submission order.
+
+**Solution: Sort by timestamp**
+```typescript
+const sorted = messages.sort((a, b) => a.timestamp - b.timestamp);
+```
 
 ### High Memory Usage
-- Limit stored messages (e.g., last 100)
-- Clear messages when changing topics
-- Unsubscribe when component unmounts
+
+**Solution: Limit message history**
+```typescript
+const MAX_MESSAGES = 100;
+
+setMessages(prev => {
+  const updated = [...prev, newMessage];
+  return updated.slice(-MAX_MESSAGES);
+});
+```
 
 ---
 
-## Configuration Examples
+## Configuration
 
 ### Environment Variables
 ```env
-# Frontend .env
+# .env
 VITE_BACKEND_URL=http://localhost:10000
 VITE_HEDERA_NETWORK=testnet
 VITE_HEDERA_MIRROR_NODE=testnet.mirrornode.hedera.com:443
 ```
 
-### Package.json Dependencies
+### TypeScript Config
+```json
+{
+  "compilerOptions": {
+    "lib": ["ES2020"],
+    "module": "ES2020",
+    "target": "ES2020"
+  }
+}
+```
+
+### Dependencies
 ```json
 {
   "dependencies": {
@@ -639,19 +763,12 @@ VITE_HEDERA_MIRROR_NODE=testnet.mirrornode.hedera.com:443
 
 ---
 
-## Recommendation
+## Summary
 
-For your project, I recommend:
+✅ **Backend returns topicId** - No streaming endpoint needed
+✅ **Frontend subscribes directly** - Using Hedera SDK
+✅ **Scales infinitely** - No backend connection overhead
+✅ **Lower latency** - Direct to mirror node
+✅ **Simple & clean** - Your backend stays focused on orchestrator logic
 
-**Start with SSE** for quick development and testing:
-- No additional dependencies
-- Simpler to debug
-- Good for demos
-
-**Migrate to Direct Hedera** for production:
-- Better scalability
-- Lower latency
-- Reduced backend load
-- Your backend can focus on orchestrator logic
-
-Both approaches work with your existing backend - no changes needed!
+Your backend is now clean and focused on processing, while frontend handles real-time streaming independently!

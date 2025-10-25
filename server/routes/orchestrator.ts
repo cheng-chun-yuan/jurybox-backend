@@ -8,14 +8,12 @@ import { getOrchestrator } from '../../lib/hedera/multi-agent-orchestrator'
 import { getAAWalletService } from '../../lib/hedera/aa-wallet-service'
 import { getOrchestratorService } from '../../lib/hedera/orchestrator-service'
 import { getDatabase } from '../../lib/database'
-import { getHCSService } from '../../lib/hedera/hcs-communication'
 import type {
   JudgmentRequest,
   OrchestratorConfig,
   OrchestratorOutput,
   EvaluationProgress
 } from '../../types/agent'
-import type { AgentMessage } from '../../lib/hedera/hcs-communication'
 
 // In-memory storage for active evaluations (in production, use Redis or database)
 const activeEvaluations = new Map<string, {
@@ -256,67 +254,6 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
         error: 'Internal server error'
       })
     }
-  })
-
-  /**
-   * GET /orchestrator/stream/:topicId
-   * Stream HCS topic messages in real-time using Server-Sent Events (SSE)
-   */
-  fastify.get<{
-    Params: { topicId: string }
-  }>('/stream/:topicId', async (request: FastifyRequest<{ Params: { topicId: string } }>, reply: FastifyReply) => {
-    const { topicId } = request.params
-    const hcsService = getHCSService()
-
-    // Set SSE headers
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    })
-
-    console.log(`📡 Client connected to stream for topic: ${topicId}`)
-
-    // Send initial connection message
-    reply.raw.write(`data: ${JSON.stringify({ type: 'connected', topicId })}\n\n`)
-
-    // Create stream handler
-    const streamHandler = (message: AgentMessage) => {
-      try {
-        const eventData = JSON.stringify({
-          type: 'message',
-          data: message
-        })
-        reply.raw.write(`data: ${eventData}\n\n`)
-        console.log(`📤 Streamed message: ${message.type} from ${message.agentName}`)
-      } catch (error) {
-        console.error('Error streaming message:', error)
-      }
-    }
-
-    // Register handler
-    hcsService.registerStreamHandler(topicId, streamHandler)
-
-    // Subscribe to topic if not already subscribed
-    if (!hcsService['subscriptions'].has(topicId)) {
-      try {
-        await hcsService.subscribeToTopic(
-          topicId,
-          () => {}, // Empty handler since we're using streamHandler
-          new Date(Date.now() - 60000) // Start from 1 minute ago to catch recent messages
-        )
-      } catch (error) {
-        console.error('Error subscribing to topic:', error)
-        reply.raw.write(`data: ${JSON.stringify({ type: 'error', message: 'Failed to subscribe to topic' })}\n\n`)
-      }
-    }
-
-    // Handle client disconnect
-    request.raw.on('close', () => {
-      console.log(`📴 Client disconnected from stream for topic: ${topicId}`)
-      hcsService.unregisterStreamHandler(topicId, streamHandler)
-    })
   })
 
   /**
