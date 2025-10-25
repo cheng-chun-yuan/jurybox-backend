@@ -9,6 +9,7 @@ import multipartPlugin from './plugins/multipart'
 
 // Routes
 import agentsRoutes from './routes/agents'
+import judgesRoutes from './routes/judges'
 import orchestratorRoutes from './routes/orchestrator'
 import uploadRoutes from './routes/upload'
 import paymentRoutes from './routes/payments'
@@ -58,6 +59,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Register routes
   await fastify.register(agentsRoutes, { prefix: '/api/agents' })
+  await fastify.register(judgesRoutes, { prefix: '/api/judges' })
   await fastify.register(orchestratorRoutes, { prefix: '/api/orchestrator' })
   await fastify.register(uploadRoutes, { prefix: '/api/upload' })
   await fastify.register(paymentRoutes, { prefix: '/api/payments' })

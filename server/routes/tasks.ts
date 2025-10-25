@@ -4,24 +4,35 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { z } from 'zod'
 import { getOrchestratorService } from '../../lib/hedera/orchestrator-service.js'
 import { dbService } from '../../lib/database.js'
 
 // Validation schemas
-const createTaskSchema = z.object({
-  content: z.string().min(1, 'Content is required'),
-  judges: z.array(z.number()).min(1, 'At least one judge is required'),
-  maxRounds: z.number().min(1).max(10).optional().default(3),
-})
+const createTaskSchema = {
+  type: 'object',
+  properties: {
+    content: { type: 'string', minLength: 1 },
+    judges: { 
+      type: 'array', 
+      items: { type: 'number' },
+      minItems: 1
+    },
+    maxRounds: { type: 'number', minimum: 1, maximum: 10, default: 3 }
+  },
+  required: ['content', 'judges']
+}
 
-const submitScoreSchema = z.object({
-  taskId: z.string(),
-  judgeId: z.number(),
-  round: z.number(),
-  score: z.number().min(0).max(10),
-  reasoning: z.string().min(1, 'Reasoning is required'),
-})
+const submitScoreSchema = {
+  type: 'object',
+  properties: {
+    taskId: { type: 'string' },
+    judgeId: { type: 'number' },
+    round: { type: 'number' },
+    score: { type: 'number', minimum: 0, maximum: 10 },
+    reasoning: { type: 'string', minLength: 1 }
+  },
+  required: ['taskId', 'judgeId', 'round', 'score', 'reasoning']
+}
 
 export default async function tasksRoutes(fastify: FastifyInstance) {
   // Create new evaluation task
@@ -40,7 +51,7 @@ export default async function tasksRoutes(fastify: FastifyInstance) {
         },
       },
     },
-  }, async (request: FastifyRequest<{ Body: z.infer<typeof createTaskSchema> }>, reply: FastifyReply) => {
+  }, async (request: FastifyRequest<{ Body: { content: string; judges: number[]; maxRounds?: number } }>, reply: FastifyReply) => {
     try {
       const { content, judges, maxRounds } = request.body
       
@@ -121,7 +132,7 @@ export default async function tasksRoutes(fastify: FastifyInstance) {
         },
       },
     },
-  }, async (request: FastifyRequest<{ Body: z.infer<typeof submitScoreSchema> }>, reply: FastifyReply) => {
+  }, async (request: FastifyRequest<{ Body: { taskId: string; judgeId: number; round: number; score: number; reasoning: string } }>, reply: FastifyReply) => {
     try {
       const { taskId, judgeId, round, score, reasoning } = request.body
       
@@ -136,18 +147,17 @@ export default async function tasksRoutes(fastify: FastifyInstance) {
       
       // Submit score to HCS
       const orchestrator = getOrchestratorService()
-      const task = await dbService.getTaskById(taskId)
-      if (task) {
+      const taskData = await dbService.getTaskById(taskId)
+      if (taskData) {
         const hcsService = (await import('../../lib/hedera/hcs-service.js')).getHCSService()
-        await hcsService.submitScore(taskId, task.topicId, judgeId.toString(), round, score, reasoning)
+        await hcsService.submitScore(taskId, taskData.topicId, judgeId.toString(), round, score, reasoning)
       }
       
       // Check if we should process scores for this round
       const scores = await dbService.getScoresForTask(taskId, round)
-      const task = await dbService.getTaskById(taskId)
       
       // If we have enough scores, process consensus
-      if (scores.length >= (task?.maxRounds || 3)) {
+      if (scores.length >= (taskData?.maxRounds || 3)) {
         await orchestrator.processScores(taskId, round)
       }
       

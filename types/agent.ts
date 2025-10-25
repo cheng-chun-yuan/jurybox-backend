@@ -149,3 +149,65 @@ export interface ConsensusResult {
   variance: number
   convergenceRounds: number
 }
+
+export interface Judge {
+  id: number
+  name: string
+  title: string
+  tagline: string
+  rating: number
+  reviews: number
+  price: number  // HBAR per judgment
+  specialties: string[]
+  color: 'purple' | 'cyan' | 'gold'
+  avatar: string  // URL to avatar image
+  trending?: boolean
+  bio: string
+  expertise: string[]
+  achievements: string[]
+  sampleReviews: Array<{
+    rating: number
+    comment: string
+    author: string
+    date: string
+  }>
+}
+
+// Conversation transcript types for transparency
+export interface ConversationMessage {
+  id: string
+  role: 'system' | 'agent' | 'orchestrator'
+  agentId?: string
+  content: string
+  timestamp: number
+  phase: 'scoring' | 'discussion' | 'consensus'
+  round?: number
+  hcsTxId?: string // Hedera Consensus Service message transaction id
+}
+
+export interface EvaluationTranscript {
+  topicId: string // HCS topic id
+  rounds: Array<{
+    round: number
+    variance?: number
+    messages: ConversationMessage[]
+  }>
+}
+
+// Orchestrator output structure
+export interface OrchestratorOutput {
+  requestId: string
+  topicId: string
+  progress: EvaluationProgress
+  transcript: EvaluationTranscript
+  consensus: ConsensusResult
+  individualResults: Array<{
+    agentId: string
+    score: number
+    feedback: string
+    strengths: string[]
+    improvements: string[]
+    completedAt: number
+    paymentTx?: string
+  }>
+}

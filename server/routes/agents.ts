@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { getViemRegistryService } from '../../lib/erc8004/viem-registry-service'
 import { getHederaService } from '../../lib/hedera/agent-service'
 import type { AgentMetadata } from '../../lib/ipfs/pinata-service'
+import { CONTRACT_ADDRESSES } from '../../lib/erc8004/contract-addresses'
 
 const agentsRoutes: FastifyPluginAsync = async (fastify) => {
   // Schema definitions for validation
@@ -54,33 +55,12 @@ const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         // Step 2: Prepare ERC-8004 compliant metadata
-        const metadata: AgentMetadata & {
-          type?: string
-          image?: string
-          endpoints?: Array<{
-            name: string
-            endpoint: string
-            version?: string
-            capabilities?: any
-          }>
-          registrations?: Array<{
-            agentId?: number
-            agentRegistry: string
-          }>
-          supportedTrust?: string[]
-        } = {
+        const metadata: AgentMetadata = {
           // Core ERC-8004 fields
           type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
           name: body.name,
           description: body.description,
           image: body.image,
-
-          // Agent capabilities for JuryBox
-          capabilities: body.specialties || [],
-          hederaAccount: hederaAccountId,
-          createdAt: Date.now(),
-          version: '1.0.0',
-
           // ERC-8004 endpoints - A2A for agent-to-agent interaction
           endpoints: [
             {
@@ -90,17 +70,17 @@ const agentsRoutes: FastifyPluginAsync = async (fastify) => {
             },
             {
               name: 'agentWallet',
-              // CAIP-10 format: eip155:<chainId>:<address>
-              // Hedera testnet chainId is 296
               endpoint: `eip155:296:${hederaAccountId}`,
             },
           ],
-
-          // Will be populated after registration
-          registrations: [],
-
+          registrations: [
+            {
+              agentId: Number(result.agentId),
+              agentRegistry: `eip155:296:${CONTRACT_ADDRESSES.IdentityRegistry}`
+            },
+          ],
           // Trust mechanisms (for JuryBox)
-          supportedTrust: ['reputation', 'crypto-economic'],
+          supportedTrust: ['crypto-economic'],
         }
 
         // Step 3: Register agent on-chain via ERC-8004 Identity Registry
