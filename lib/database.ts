@@ -293,6 +293,50 @@ export class DatabaseService {
       averageScore: avgScore._avg.score || 0,
     }
   }
+
+  // AA Wallet operations
+  async createAAWallet(data: {
+    aaWalletId: string
+    userAddress: string
+    publicKey: string
+    initialBalance: number
+    fundedBalance: number
+    fundingTxId?: string
+    name?: string
+  }) {
+    return this.db.aAWallet.create({
+      data: {
+        ...data,
+        name: data.name || 'Orchestrator AA Wallet'
+      },
+    })
+  }
+
+  async getAAWalletByAddress(aaWalletId: string) {
+    return this.db.aAWallet.findUnique({
+      where: { aaWalletId },
+    })
+  }
+
+  async getUserAAWallets(userAddress: string) {
+    return this.db.aAWallet.findMany({
+      where: { userAddress },
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  async getAllAAWallets() {
+    return this.db.aAWallet.findMany({
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  async updateAAWalletStatus(aaWalletId: string, isActive: boolean) {
+    return this.db.aAWallet.update({
+      where: { aaWalletId },
+      data: { isActive },
+    })
+  }
 }
 
 // Export singleton instance

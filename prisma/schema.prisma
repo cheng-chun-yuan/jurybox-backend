@@ -43,6 +43,13 @@ model Task {
   creatorAddress  String
   finalScore      Float?
   consensusReached Boolean @default(false)
+  
+  // Monthly quota tracking
+  monthlyCap      Float?   // User's monthly spending limit
+  currentUsage    Float?   // Current month's usage before this task
+  taskCost        Float?   // Cost of this specific task
+  quotaExceeded   Boolean  @default(false) // Whether task was blocked by quota
+  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -91,6 +98,28 @@ model Payment {
   @@map("payments")
 }
 
+model Judge {
+  id            Int      @id @default(autoincrement())
+  name          String
+  title         String
+  tagline       String
+  rating        Float
+  reviews       Int
+  price         Float    // HBAR per judgment
+  specialties   String   // JSON array stored as string
+  color         String   // 'purple' | 'cyan' | 'gold'
+  avatar        String   // URL to avatar image
+  trending      Boolean  @default(false)
+  bio           String
+  expertise     String   // JSON array stored as string
+  achievements  String   // JSON array stored as string
+  sampleReviews String   // JSON array stored as string
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("judges")
+}
+
 model AuditLog {
   id          Int      @id @default(autoincrement())
   taskId      String
@@ -104,3 +133,39 @@ model AuditLog {
 
   @@map("audit_logs")
 }
+
+
+
+model Orchestrator {
+  id            String   @id
+  userAddress   String
+  systemPrompt  String?
+  config        String?  // JSON stored as string
+  status        String   @default("created")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  aaWallets     AAWallet[]
+
+  @@map("orchestrators")
+}
+
+model AAWallet {
+  id                    String   @id
+  orchestratorId        String
+  address               String
+  accountId             String
+  publicKey             String
+  privateKeyEncrypted   String
+  name                  String   @default("Orchestrator AA Wallet")
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  lastUsed              DateTime @default(now())
+
+  // Relations
+  orchestrator          Orchestrator @relation(fields: [orchestratorId], references: [id])
+
+  @@map("aa_wallets")
+}
+
