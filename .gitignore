@@ -44,3 +44,11 @@ logs/
 
 # Docker
 .dockerignore
+
+# Database
+prisma/dev.db
+*.db
+*.db-journal
+
+# Scripts (tests and demos)
+scripts/
