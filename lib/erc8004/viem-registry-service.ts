@@ -52,6 +52,7 @@ const reputationRegistryAbi = [
       { name: 'agentId', type: 'uint256' },
       { name: 'rating', type: 'uint256' },
       { name: 'comment', type: 'string' },
+      { name: 'feedbackAuth', type: 'bytes' },
     ],
     outputs: [],
   },
@@ -254,22 +255,26 @@ export class ViemRegistryService {
   }
 
   /**
-   * Submit feedback to reputation registry
+   * Submit feedback to reputation registry with FeedbackAuth
    */
   async submitFeedback(
     agentId: bigint,
     rating: number,
-    comment: string
+    comment: string,
+    feedbackAuth?: `0x${string}`
   ): Promise<Hash> {
     try {
       console.log(`💬 Submitting feedback for agent ${agentId}`)
       console.log(`⭐ Rating: ${rating}/100`)
 
+      // If no feedbackAuth provided, create empty bytes
+      const authBytes = feedbackAuth || '0x'
+
       const { request } = await this.publicClient.simulateContract({
         address: CONTRACT_ADDRESSES.ReputationRegistry as Address,
         abi: reputationRegistryAbi,
         functionName: 'submitFeedback',
-        args: [agentId, BigInt(rating), comment],
+        args: [agentId, BigInt(rating), comment, authBytes],
         account: this.walletClient.account,
       })
 

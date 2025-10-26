@@ -1,53 +1,24 @@
-# Dockerfile for Fastify Server
-FROM oven/bun:1.2-alpine AS base
+FROM oven/bun:1.2-alpine
 
 WORKDIR /app
 
+# Install dependencies for Prisma
+RUN apk add --no-cache openssl curl
+
+# Copy package files
+COPY package.json bun.lock* ./
+
 # Install dependencies
-FROM base AS deps
-COPY package.json bun.lock* ./
-RUN bun install --production
-
-# Development stage
-FROM base AS dev
-COPY package.json bun.lock* ./
-COPY . .
-RUN bun install --no-save
-
-# Install system dependencies for Prisma
-RUN apk add --no-cache curl
-
-# Create data directory
-RUN mkdir -p /app/data
-
-# Generate Prisma client
-RUN bun run db:generate
-
-EXPOSE 10000
-CMD ["bun", "--watch", "server/index.ts"]
-
-# Production build
-FROM base AS builder
-COPY package.json bun.lock* ./
 RUN bun install
-COPY . .
-# No build step needed for Bun/TypeScript server
 
-# Production stage
-FROM base AS production
-ENV NODE_ENV=production
-
-# Copy production dependencies
-COPY --from=deps /app/node_modules ./node_modules
 # Copy application code
 COPY . .
 
-# Create non-root user
-RUN addgroup -g 1001 -S bunuser && \
-    adduser -S bunuser -u 1001 && \
-    chown -R bunuser:bunuser /app
+# Generate Prisma client
+RUN bunx prisma generate
 
-USER bunuser
+# Create data directory
+RUN mkdir -p /app/data
 
 EXPOSE 10000
 

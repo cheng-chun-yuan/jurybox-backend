@@ -1,7 +1,6 @@
 version: '3.9'
 
 services:
-  # JuryBox Backend API (with SQLite)
   backend:
     build:
       context: .
@@ -9,70 +8,32 @@ services:
     container_name: jurybox-backend
     restart: unless-stopped
     environment:
-      # Database (SQLite - stored in volume)
       DATABASE_URL: file:/app/data/production.db
-
-      # Server
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${PORT:-10000}
-
-      # Hedera
       HEDERA_NETWORK: ${HEDERA_NETWORK:-testnet}
       HEDERA_ACCOUNT_ID: ${HEDERA_ACCOUNT_ID}
       HEDERA_PRIVATE_KEY: ${HEDERA_PRIVATE_KEY}
       HEDERA_OPERATOR_ACCOUNT_ID: ${HEDERA_OPERATOR_ACCOUNT_ID:-${HEDERA_ACCOUNT_ID}}
       HEDERA_OPERATOR_PRIVATE_KEY: ${HEDERA_OPERATOR_PRIVATE_KEY:-${HEDERA_PRIVATE_KEY}}
-
-      # OpenAI
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-
-      # Pinata (IPFS)
       PINATA_JWT: ${PINATA_JWT}
       PINATA_GATEWAY_URL: ${PINATA_GATEWAY_URL:-https://gateway.pinata.cloud}
-
-      # ERC-8004 Registry
       REGISTRY_PRIVATE_KEY: ${REGISTRY_PRIVATE_KEY}
       HEDERA_JSON_RPC_URL: ${HEDERA_JSON_RPC_URL:-https://testnet.hashio.io/api}
-
-      # X402 Facilitator
       X402_FACILITATOR_ACCOUNT_ID: ${X402_FACILITATOR_ACCOUNT_ID:-${HEDERA_ACCOUNT_ID}}
       X402_FACILITATOR_PRIVATE_KEY: ${X402_FACILITATOR_PRIVATE_KEY:-${HEDERA_PRIVATE_KEY}}
-
-      # Encryption
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-
-      # CORS
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
-
-      # Logging
       LOG_LEVEL: ${LOG_LEVEL:-info}
-
-      # Backend URL
       BACKEND_URL: ${BACKEND_URL:-http://localhost:10000}
     ports:
       - "${PORT:-10000}:10000"
     volumes:
-      # SQLite database and data
       - sqlite_data:/app/data
-      # Logs (optional)
       - backend_logs:/app/logs
-    healthcheck:
-      test: ["CMD", "bun", "run", "healthcheck"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    command: >
-      sh -c "
-        echo '🗄️  Setting up SQLite database...' &&
-        mkdir -p /app/data &&
-        bunx prisma migrate deploy &&
-        echo '✅ Database ready. Starting server...' &&
-        bun run start
-      "
+    command: sh -c "mkdir -p /app/data && bunx prisma migrate deploy && bun run start"
 
 volumes:
   sqlite_data:
-    driver: local
   backend_logs:
-    driver: local

@@ -173,7 +173,7 @@ PINATA_API_KEY=your_pinata_api_key
 PINATA_API_SECRET=your_pinata_api_secret
 
 # AI Model Provider
-OPENAI_API_KEY=your_openai_api_key
+OPENAI_API_KEY=your_OPENAI_API_KEY
 
 # X402 Payment Configuration
 X402_DEBUG=true
