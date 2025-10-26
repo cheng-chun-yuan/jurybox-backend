@@ -147,7 +147,7 @@ export class HCSService {
       return topicInfo
     } catch (error) {
       logger.error('Failed to create HCS topic', error)
-      throw new HCSTopicError('Failed to create topic', { error })
+      throw new HCSTopicError('Failed to create topic')
     }
   }
 
@@ -166,7 +166,7 @@ export class HCSService {
       const response = await transaction.execute(this.client)
       const receipt = await response.getReceipt(this.client)
 
-      const consensusTimestamp = receipt.consensusTimestamp
+      const consensusTimestamp = (receipt as any).consensusTimestamp
       if (!consensusTimestamp) {
         throw new HCSTopicError('No consensus timestamp returned')
       }
