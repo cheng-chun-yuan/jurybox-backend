@@ -99,23 +99,30 @@ model Payment {
 }
 
 model Judge {
-  id            Int      @id @default(autoincrement())
-  name          String
-  title         String
-  tagline       String
-  rating        Float
-  reviews       Int
-  price         Float    // HBAR per judgment
-  specialties   String   // JSON array stored as string
-  color         String   // 'purple' | 'cyan' | 'gold'
-  avatar        String   // URL to avatar image
-  trending      Boolean  @default(false)
-  bio           String
-  expertise     String   // JSON array stored as string
-  achievements  String   // JSON array stored as string
-  sampleReviews String   // JSON array stored as string
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                    Int      @id @default(autoincrement())
+  name                  String
+  title                 String
+  tagline               String
+  rating                Float
+  reviews               Int
+  price                 Float    // HBAR per judgment
+  specialties           String   // JSON array stored as string
+  color                 String   // 'purple' | 'cyan' | 'gold'
+  avatar                String   // URL to avatar image
+  trending              Boolean  @default(false)
+  bio                   String
+  expertise             String   // JSON array stored as string
+  achievements          String   // JSON array stored as string
+  sampleReviews         String   // JSON array stored as string
+
+  // Hedera Wallet Fields
+  walletAccountId       String?  // Hedera account ID (e.g., 0.0.123456)
+  walletEvmAddress      String?  // EVM address derived from account ID
+  walletPublicKey       String?  // Public key for the wallet
+  walletPrivateKeyEnc   String?  // Encrypted private key
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   @@map("judges")
 }

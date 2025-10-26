@@ -224,7 +224,7 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * POST /api/judges
-   * Create a new judge with IPFS upload and database storage
+   * Create a new judge with Hedera wallet and database storage
    */
   fastify.post('/', async (request, reply) => {
     try {
@@ -236,15 +236,8 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
         avatar,
         themeColor,
         specialties,
-        modelProvider,
-        modelName,
-        systemPrompt,
-        temperature,
         price,
-        walletAddress,
-        hederaAccount,
-        capabilities,
-        version = '1.0.0'
+        initialBalance = 0,
       } = request.body as {
         name: string
         title?: string
@@ -253,15 +246,8 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
         avatar?: string
         themeColor?: string
         specialties?: string[]
-        modelProvider?: string
-        modelName?: string
-        systemPrompt?: string
-        temperature?: number
         price?: number
-        walletAddress?: string
-        hederaAccount?: string
-        capabilities?: string[]
-        version?: string
+        initialBalance?: number
       }
 
       // Validate required fields
@@ -273,54 +259,27 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
-      // Import IPFS service
-      const { getPinataService } = await import('../../lib/ipfs/pinata-service.js')
-      const pinataService = getPinataService()
+      // Create Hedera wallet for the judge
+      const { getJudgeWalletService } = await import('../../lib/hedera/judge-wallet.service.js')
+      const walletService = getJudgeWalletService()
 
-      // Create agent metadata for IPFS
-      const agentMetadata = {
-        type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-        name,
-        title: title || '',
-        description: description || '',
-        image: avatar || '',
-        capabilities: capabilities || [],
-        hederaAccount: hederaAccount || '',
-        createdAt: Date.now(),
-        version,
-        endpoints: [
-          {
-            name: 'A2A',
-            endpoint: `${process.env.BACKEND_URL || 'http://localhost:10000'}/.well-known/agent-card.json`,
-            version: '0.3.0'
-          },
-          {
-            name: 'agentWallet',
-            endpoint: `eip155:296:${hederaAccount || ''}`
-          }
-        ],
-        registrations: [],
-        supportedTrust: ['reputation', 'crypto-economic']
-      }
-
-      // Upload to IPFS
-      let ipfsUri: string
+      let walletInfo
       try {
-        ipfsUri = await pinataService.uploadAgentMetadata(agentMetadata)
-        fastify.log.info(`Agent metadata uploaded to IPFS: ${ipfsUri}`)
-      } catch (ipfsError) {
-        fastify.log.error('IPFS upload failed:', ipfsError)
+        walletInfo = await walletService.createJudgeWallet(initialBalance)
+        fastify.log.info('Judge wallet created', {
+          accountId: walletInfo.accountId,
+          evmAddress: walletInfo.evmAddress,
+        })
+      } catch (walletError: any) {
+        fastify.log.error('Wallet creation failed:', walletError)
         return reply.code(500).send({
           success: false,
-          error: 'IPFS upload failed',
-          message: 'Failed to upload agent metadata to IPFS',
+          error: 'Wallet creation failed',
+          message: walletError.message || 'Failed to create Hedera wallet for judge',
         })
       }
 
-      // Extract IPFS hash for database storage
-      const ipfsHash = ipfsUri.replace('ipfs://', '')
-
-      // Create judge in database
+      // Create judge in database with wallet info
       const judge = await prisma.judge.create({
         data: {
           name,
@@ -337,35 +296,29 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
           expertise: JSON.stringify(specialties || []),
           achievements: JSON.stringify([]),
           sampleReviews: JSON.stringify([]),
+          // Wallet fields
+          walletAccountId: walletInfo.accountId,
+          walletEvmAddress: walletInfo.evmAddress,
+          walletPublicKey: walletInfo.publicKey,
+          walletPrivateKeyEnc: walletInfo.privateKeyEncrypted,
         },
       })
 
-      // Generate payment page URL
+      // Generate payment page URL (facilitator complete endpoint)
       const backendUrl = process.env.BACKEND_URL || 'http://localhost:10000'
-      const paymentPageUrl = `${backendUrl}/api/pay/judge/${judge.id}`
-
-      // Update judge with payment URL and wallet address
-      await prisma.judge.update({
-        where: { id: judge.id },
-        data: {
-          // Add wallet address to bio or create a separate field if needed
-          bio: `${description || ''}\n\nWallet: ${walletAddress || ''}`,
-        },
-      })
+      const paymentPageUrl = `${backendUrl}/api/facilitator/complete`
 
       // Log the creation event
       fastify.log.info(`Judge created successfully: ${judge.id}`)
 
       return reply.code(201).send({
         success: true,
-        data: {
-          judgeId: judge.id,
-          ipfsUri,
-          ipfsHash,
-          paymentPageUrl,
-          registryTxHash: null, // TODO: Add Hedera transaction hash if needed
-        },
-        message: 'Judge created successfully',
+        judgeId: judge.id,
+        walletAddress: walletInfo.accountId,
+        evmAddress: walletInfo.evmAddress,
+        price: price || 0.05,
+        paymentPageUrl,
+        registryTxHash: null, // TODO: Add ERC-8004 registry transaction if needed
       })
     } catch (error: any) {
       fastify.log.error('Create judge error:', error)
