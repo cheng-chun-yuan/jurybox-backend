@@ -1,40 +1,16 @@
 version: '3.9'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:16-alpine
-    container_name: jurybox-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-jurybox}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jurybox_password}
-      POSTGRES_DB: ${POSTGRES_DB:-jurybox}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jurybox}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - jurybox-network
-
-  # JuryBox Backend API
+  # JuryBox Backend API (with SQLite)
   backend:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: jurybox-backend
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      # Database
-      DATABASE_URL: postgresql://${POSTGRES_USER:-jurybox}:${POSTGRES_PASSWORD:-jurybox_password}@postgres:5432/${POSTGRES_DB:-jurybox}?schema=public
+      # Database (SQLite - stored in volume)
+      DATABASE_URL: file:/app/data/production.db
 
       # Server
       NODE_ENV: ${NODE_ENV:-production}
@@ -44,8 +20,8 @@ services:
       HEDERA_NETWORK: ${HEDERA_NETWORK:-testnet}
       HEDERA_ACCOUNT_ID: ${HEDERA_ACCOUNT_ID}
       HEDERA_PRIVATE_KEY: ${HEDERA_PRIVATE_KEY}
-      HEDERA_OPERATOR_ACCOUNT_ID: ${HEDERA_OPERATOR_ACCOUNT_ID}
-      HEDERA_OPERATOR_PRIVATE_KEY: ${HEDERA_OPERATOR_PRIVATE_KEY}
+      HEDERA_OPERATOR_ACCOUNT_ID: ${HEDERA_OPERATOR_ACCOUNT_ID:-${HEDERA_ACCOUNT_ID}}
+      HEDERA_OPERATOR_PRIVATE_KEY: ${HEDERA_OPERATOR_PRIVATE_KEY:-${HEDERA_PRIVATE_KEY}}
 
       # OpenAI
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -59,8 +35,11 @@ services:
       HEDERA_JSON_RPC_URL: ${HEDERA_JSON_RPC_URL:-https://testnet.hashio.io/api}
 
       # X402 Facilitator
-      X402_FACILITATOR_ACCOUNT_ID: ${X402_FACILITATOR_ACCOUNT_ID}
-      X402_FACILITATOR_PRIVATE_KEY: ${X402_FACILITATOR_PRIVATE_KEY}
+      X402_FACILITATOR_ACCOUNT_ID: ${X402_FACILITATOR_ACCOUNT_ID:-${HEDERA_ACCOUNT_ID}}
+      X402_FACILITATOR_PRIVATE_KEY: ${X402_FACILITATOR_PRIVATE_KEY:-${HEDERA_PRIVATE_KEY}}
+
+      # Encryption
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
 
       # CORS
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
@@ -68,11 +47,14 @@ services:
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
-      # Backend URL (for metadata)
+      # Backend URL
       BACKEND_URL: ${BACKEND_URL:-http://localhost:10000}
     ports:
       - "${PORT:-10000}:10000"
     volumes:
+      # SQLite database and data
+      - sqlite_data:/app/data
+      # Logs (optional)
       - backend_logs:/app/logs
     healthcheck:
       test: ["CMD", "bun", "run", "healthcheck"]
@@ -80,44 +62,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    networks:
-      - jurybox-network
     command: >
       sh -c "
-        echo '🔄 Running database migrations...' &&
+        echo '🗄️  Setting up SQLite database...' &&
+        mkdir -p /app/data &&
         bunx prisma migrate deploy &&
-        echo '✅ Migrations complete. Starting server...' &&
+        echo '✅ Database ready. Starting server...' &&
         bun run start
       "
 
-  # pgAdmin (Database Management UI) - Optional
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: jurybox-pgadmin
-    restart: unless-stopped
-    profiles:
-      - tools
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@jurybox.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-    ports:
-      - "${PGADMIN_PORT:-5050}:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      - postgres
-    networks:
-      - jurybox-network
-
 volumes:
-  postgres_data:
+  sqlite_data:
     driver: local
   backend_logs:
     driver: local
-  pgadmin_data:
-    driver: local
-
-networks:
-  jurybox-network:
-    driver: bridge

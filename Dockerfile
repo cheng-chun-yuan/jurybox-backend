@@ -5,6 +5,9 @@
 FROM oven/bun:1.1.38-alpine AS deps
 WORKDIR /app
 
+# Install build dependencies for better-sqlite3
+RUN apk add --no-cache python3 make g++ gcc
+
 # Copy package files
 COPY package.json ./
 COPY bun.lockb* ./
@@ -15,6 +18,9 @@ RUN bun install --production
 # Stage 2: Builder
 FROM oven/bun:1.1.38-alpine AS builder
 WORKDIR /app
+
+# Install build dependencies for better-sqlite3
+RUN apk add --no-cache python3 make g++ gcc
 
 # Copy package files
 COPY package.json ./
