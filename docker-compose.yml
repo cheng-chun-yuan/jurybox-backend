@@ -1,78 +1,123 @@
+version: '3.9'
+
 services:
-  # Fastify Backend Server
-  fastify-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-      target: dev
-    container_name: jurybox-fastify
-    ports:
-      - "10000:10000"
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: jurybox-postgres
+    restart: unless-stopped
     environment:
-      - NODE_ENV=development
-      - FASTIFY_HOST=0.0.0.0
-      - FASTIFY_PORT=10000
-      - CORS_ORIGIN=http://localhost:3000
-      - LOG_LEVEL=info
-      # Database Configuration
-      - DATABASE_URL=file:/app/data/dev.db
-      # Hedera Configuration
-      - HEDERA_ACCOUNT_ID=${HEDERA_ACCOUNT_ID}
-      - HEDERA_PRIVATE_KEY=${HEDERA_PRIVATE_KEY}
-      - HEDERA_NETWORK=${HEDERA_NETWORK}
-      # Creator Configuration
-      - CREATOR_PRIVATE_KEY=${CREATOR_PRIVATE_KEY}
-      # Pinata IPFS Configuration
-      - PINATA_API_KEY=${PINATA_API_KEY}
-      - PINATA_API_SECRET=${PINATA_API_SECRET}
-      # AI Model Provider
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      # X402 Payment Configuration
-      - X402_DEBUG=true
-      - X402_FACILITATOR_URL=https://x402.org/facilitator
-      - X402_FACILITATOR_API_KEY=${X402_FACILITATOR_API_KEY}
-      # Application
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+      POSTGRES_USER: ${POSTGRES_USER:-jurybox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jurybox_password}
+      POSTGRES_DB: ${POSTGRES_DB:-jurybox}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ./server:/app/server
-      - ./lib:/app/lib
-      - ./types:/app/types
-      - ./prisma:/app/prisma
-      - ./data:/app/data
-      - /app/node_modules
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jurybox}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - jurybox-network
+
+  # JuryBox Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jurybox-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jurybox}:${POSTGRES_PASSWORD:-jurybox_password}@postgres:5432/${POSTGRES_DB:-jurybox}?schema=public
+
+      # Server
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-10000}
+
+      # Hedera
+      HEDERA_NETWORK: ${HEDERA_NETWORK:-testnet}
+      HEDERA_ACCOUNT_ID: ${HEDERA_ACCOUNT_ID}
+      HEDERA_PRIVATE_KEY: ${HEDERA_PRIVATE_KEY}
+      HEDERA_OPERATOR_ACCOUNT_ID: ${HEDERA_OPERATOR_ACCOUNT_ID}
+      HEDERA_OPERATOR_PRIVATE_KEY: ${HEDERA_OPERATOR_PRIVATE_KEY}
+
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+      # Pinata (IPFS)
+      PINATA_JWT: ${PINATA_JWT}
+      PINATA_GATEWAY_URL: ${PINATA_GATEWAY_URL:-https://gateway.pinata.cloud}
+
+      # ERC-8004 Registry
+      REGISTRY_PRIVATE_KEY: ${REGISTRY_PRIVATE_KEY}
+      HEDERA_JSON_RPC_URL: ${HEDERA_JSON_RPC_URL:-https://testnet.hashio.io/api}
+
+      # X402 Facilitator
+      X402_FACILITATOR_ACCOUNT_ID: ${X402_FACILITATOR_ACCOUNT_ID}
+      X402_FACILITATOR_PRIVATE_KEY: ${X402_FACILITATOR_PRIVATE_KEY}
+
+      # CORS
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # Backend URL (for metadata)
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:10000}
+    ports:
+      - "${PORT:-10000}:10000"
+    volumes:
+      - backend_logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
+      test: ["CMD", "bun", "run", "healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # ngrok - Expose Fastify server to the internet
-  ngrok:
-    image: ngrok/ngrok:latest
-    container_name: jurybox-ngrok
-    restart: unless-stopped
-    command:
-      - "http"
-      - "fastify-server:10000"
-      - "--log=stdout"
-    environment:
-      # Add your ngrok authtoken here or via .env
-      # Get it from: https://dashboard.ngrok.com/get-started/your-authtoken
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
-    ports:
-      - "4040:4040"  # ngrok web interface
     networks:
       - jurybox-network
+    command: >
+      sh -c "
+        echo '🔄 Running database migrations...' &&
+        bunx prisma migrate deploy &&
+        echo '✅ Migrations complete. Starting server...' &&
+        bun run start
+      "
+
+  # pgAdmin (Database Management UI) - Optional
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: jurybox-pgadmin
+    restart: unless-stopped
+    profiles:
+      - tools
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@jurybox.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
     depends_on:
-      fastify-server:
-        condition: service_healthy
+      - postgres
+    networks:
+      - jurybox-network
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_logs:
+    driver: local
+  pgadmin_data:
+    driver: local
 
 networks:
   jurybox-network:
     driver: bridge
-
-volumes:
-  node_modules:
