@@ -51,7 +51,7 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
       price: judge.price,
       specialties: JSON.parse(judge.specialties),
       color: judge.color as 'purple' | 'cyan' | 'gold',
-      avatar: judge.avatar,
+      avatar: judge.avatar || '',
       trending: judge.trending,
       bio: judge.bio,
       expertise: JSON.parse(judge.expertise),
@@ -266,10 +266,10 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
       let walletInfo
       try {
         walletInfo = await walletService.createJudgeWallet(initialBalance)
-        fastify.log.info('Judge wallet created', {
+        fastify.log.info({
           accountId: walletInfo.accountId,
           evmAddress: walletInfo.evmAddress,
-        })
+        },'Judge wallet created')
       } catch (walletError: any) {
         fastify.log.error('Wallet creation failed:', walletError)
         return reply.code(500).send({
@@ -277,6 +277,59 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
           error: 'Wallet creation failed',
           message: walletError.message || 'Failed to create Hedera wallet for judge',
         })
+      }
+
+      // Register judge to ERC-8004 on-chain registry
+      let registryTxHash: string | null = null
+      let registryAgentId: bigint | null = null
+
+      try {
+        const { getViemRegistryService } = await import('../../lib/erc8004/viem-registry-service.js')
+        const { CONTRACT_ADDRESSES } = await import('../../lib/erc8004/contract-addresses.js')
+        const registryService = getViemRegistryService()
+
+        // Prepare EIP-8004 compliant metadata for IPFS
+        const backendUrl = process.env.BACKEND_URL || 'http://localhost:10000'
+
+        const metadata = {
+          type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+          name,
+          description: description || `${title || 'AI Judge'} - ${tagline?.[0] || 'Providing expert judgment services'}`,
+          image: avatar || '',
+          endpoints: [
+            {
+              name: 'A2A',
+              endpoint: `${backendUrl}/api/judges/:id/interact`,
+              version: '0.3.0',
+            },
+            {
+              name: 'agentWallet',
+              endpoint: `eip155:296:${walletInfo.evmAddress}`, // Hedera testnet chain ID is 296
+            },
+          ],
+          registrations: [
+            {
+              agentId: 0, // Will be updated after registration
+              agentRegistry: `eip155:296:${CONTRACT_ADDRESSES.IdentityRegistry}`,
+            },
+          ],
+          supportedTrust: ['crypto-economic'],
+        }
+
+        fastify.log.info('Registering judge to ERC-8004 registry...')
+        const registrationResult = await registryService.registerAgent(metadata)
+
+        registryTxHash = registrationResult.txHash
+        registryAgentId = registrationResult.agentId
+
+        fastify.log.info({
+          agentId: registryAgentId.toString(),
+          txHash: registryTxHash,
+          ipfsUri: registrationResult.ipfsUri,
+        }, 'Judge registered to ERC-8004 registry')
+      } catch (registryError: any) {
+        fastify.log.warn('ERC-8004 registration failed (continuing anyway):', registryError.message)
+        // Don't fail the entire judge creation if registry fails
       }
 
       // Create judge in database with wallet info
@@ -318,7 +371,8 @@ const judgesRoutes: FastifyPluginAsync = async (fastify) => {
         evmAddress: walletInfo.evmAddress,
         price: price || 0.05,
         paymentPageUrl,
-        registryTxHash: null, // TODO: Add ERC-8004 registry transaction if needed
+        registryTxHash,
+        registryAgentId: registryAgentId?.toString() || null,
       })
     } catch (error: any) {
       fastify.log.error('Create judge error:', error)

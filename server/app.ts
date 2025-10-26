@@ -16,6 +16,7 @@ import paymentRoutes from './routes/payments'
 import tasksRoutes from './routes/tasks'
 import auditRoutes from './routes/audit'
 import facilitatorRoutes from './routes/facilitator'
+import feedbackRoutes from './routes/feedback'
 
 export async function buildApp(): Promise<FastifyInstance> {
   const fastify = Fastify({
@@ -67,6 +68,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(tasksRoutes, { prefix: '/api/tasks' })
   await fastify.register(auditRoutes, { prefix: '/api/audit' })
   await fastify.register(facilitatorRoutes, { prefix: '/api/facilitator' })
+  await fastify.register(feedbackRoutes, { prefix: '/api/feedback' })
 
   // Graceful shutdown
   fastify.addHook('onClose', async () => {

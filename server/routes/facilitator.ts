@@ -20,10 +20,10 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
     facilitatorPrivateKey
   )
 
-  fastify.log.info('Facilitator service initialized', {
+  fastify.log.info({
     accountId: facilitatorAccountId.toString(),
     network: config.hedera.network,
-  })
+  }, 'Facilitator service initialized')
 
   /**
    * POST /api/facilitator/verify
@@ -36,7 +36,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         requirements: any
       }
 
-      fastify.log.debug('Verifying payment', { paymentPayload, requirements })
+      fastify.log.debug({ paymentPayload, requirements }, 'Verifying payment')
 
       // Extract payment details from payload
       const { from, to, amount, transactionId } = paymentPayload
@@ -61,7 +61,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         // For now, we'll accept the payload as valid if it meets requirements
         verified = true
       } catch (error) {
-        fastify.log.error('Failed to verify transaction on Hedera', error)
+        fastify.log.error({ error }, 'Failed to verify transaction on Hedera')
         verified = false
       }
 
@@ -72,7 +72,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         transactionId,
       })
     } catch (error: any) {
-      fastify.log.error('Payment verification error:', error)
+      fastify.log.error({ error }, 'Payment verification error')
       return reply.code(500).send({
         success: false,
         error: 'Payment verification failed',
@@ -92,7 +92,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         requirements: any
       }
 
-      fastify.log.debug('Settling payment', { paymentPayload, requirements })
+      fastify.log.debug({ paymentPayload, requirements }, 'Settling payment')
 
       // Verify payment first
       const { from, to, amount, transactionId } = paymentPayload
@@ -117,12 +117,12 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
 
       const settlementTxId = response.transactionId.toString()
 
-      fastify.log.info('Payment settled', {
+      fastify.log.info({
         from: facilitatorAccountId.toString(),
         to,
         amount,
         settlementTxId,
-      })
+      }, 'Payment settled')
 
       return reply.code(200).send({
         success: true,
@@ -130,7 +130,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         status: receipt.status.toString(),
       })
     } catch (error: any) {
-      fastify.log.error('Payment settlement error:', error)
+      fastify.log.error({ error }, 'Payment settlement error')
       return reply.code(500).send({
         success: false,
         error: 'Payment settlement failed',
@@ -150,7 +150,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         requirements: any
       }
 
-      fastify.log.debug('Completing payment workflow', { paymentPayload, requirements })
+      fastify.log.debug({ paymentPayload, requirements }, 'Completing payment workflow')
 
       // Step 1: Verify
       const { from, to, amount, transactionId } = paymentPayload
@@ -175,13 +175,13 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
 
       const settlementTxId = response.transactionId.toString()
 
-      fastify.log.info('Payment workflow completed', {
+      fastify.log.info({
         verifiedTxId: transactionId,
         settlementTxId,
         payer: from,
         merchant: to,
         amount,
-      })
+      }, 'Payment workflow completed')
 
       return reply.code(200).send({
         success: true,
@@ -191,7 +191,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
         status: receipt.status.toString(),
       })
     } catch (error: any) {
-      fastify.log.error('Complete payment workflow error:', error)
+      fastify.log.error({ error }, 'Complete payment workflow error')
       return reply.code(500).send({
         success: false,
         error: 'Payment workflow failed',
@@ -204,7 +204,7 @@ const facilitatorRoutes: FastifyPluginAsync = async (fastify) => {
    * GET /api/facilitator/info
    * Get facilitator service information
    */
-  fastify.get('/info', async (request, reply) => {
+  fastify.get('/info', async (_request, reply) => {
     return reply.code(200).send({
       success: true,
       facilitator: {

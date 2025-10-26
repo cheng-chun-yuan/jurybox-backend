@@ -49,11 +49,11 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
    * Start a new multi-agent evaluation
    */
   fastify.post<{
-    Body: EvaluationRequest
+    Body: EvaluationRequest & { userWalletAddress?: string }
     Reply: EvaluationResponse
-  }>('/evaluate', async (request: FastifyRequest<{ Body: EvaluationRequest }>, reply: FastifyReply) => {
+  }>('/evaluate', async (request: FastifyRequest<{ Body: EvaluationRequest & { userWalletAddress?: string } }>, reply: FastifyReply) => {
     try {
-      const { request: judgmentRequest, config } = request.body
+      const { request: judgmentRequest, config, userWalletAddress } = request.body
 
       // Validate request
       if (!judgmentRequest.id || !judgmentRequest.content || !judgmentRequest.selectedAgents?.length) {
@@ -129,12 +129,65 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
           }
         })
 
-      return reply.status(202).send({
+      // Generate feedback auth if user wallet provided
+      const evaluationResponse: any = {
         evaluationId: judgmentRequest.id,
         status: 'started',
         topicId, // Return topic ID immediately
         message: 'Evaluation started successfully'
-      })
+      }
+
+      if (userWalletAddress) {
+        // Validate EVM address format
+        if (!/^0x[a-fA-F0-9]{40}$/.test(userWalletAddress)) {
+          return reply.status(400).send({
+            evaluationId: '',
+            status: 'failed',
+            message: 'Invalid userWalletAddress format (must be EVM address: 0x...)'
+          })
+        }
+
+        const { getFeedbackAuthService } = await import('../../lib/feedback/feedback-auth.service.js')
+        const feedbackAuthService = getFeedbackAuthService()
+
+        // Generate feedback auth for each selected agent
+        const feedbackAuths = await Promise.all(
+          judgmentRequest.selectedAgents.map(async (agent) => {
+            const agentId = parseInt(agent.id, 10)
+            const auth = await feedbackAuthService.generateFeedbackAuth({
+              agentId,
+              clientAddress: userWalletAddress,
+              indexLimit: 100,
+              expirySeconds: 3600, // 1 hour
+            })
+
+            return {
+              id: `auth_${Date.now()}_${agentId}`,
+              agentId: agentId.toString(),
+              agentName: agent.name,
+              clientAddress: auth.clientAddress,
+              feedbackAuth: auth.feedbackAuth, // Encoded bytes for on-chain
+              issuedAt: new Date().toISOString(),
+              expiresAt: new Date(Number(auth.expiry) * 1000).toISOString(),
+              indexLimit: Number(auth.indexTo),
+              chainId: auth.chainId.toString(),
+              identityRegistry: auth.identityRegistry,
+              signerAddress: auth.signerAddress,
+              signature: auth.signature,
+            }
+          })
+        )
+
+        evaluationResponse.feedback = {
+          message: 'After evaluation completes, you can submit feedback for judges',
+          submitEndpoint: 'Direct submission via blockchain (use frontend with viem)',
+          getReputationEndpoint: `/api/feedback/:agentId`,
+          userWalletAddress,
+          feedbackAuths,
+        }
+      }
+
+      return reply.status(202).send(evaluationResponse)
 
     } catch (error) {
       console.error('Error starting evaluation:', error)
@@ -554,13 +607,15 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
         maxRounds = 2,
         consensusAlgorithm = 'weighted_average',
         content = "Evaluate this test content for quality and accuracy.",
-        criteria = ['Accuracy', 'Clarity', 'Completeness', 'Relevance']
+        criteria = ['Accuracy', 'Clarity', 'Completeness', 'Relevance'],
+        userWalletAddress // User's connected wallet address for feedback auth
       } = request.body as {
         agentIds?: number[]
         maxRounds?: number
         consensusAlgorithm?: string
         content?: string
         criteria?: string[]
+        userWalletAddress?: string // EVM address from connected wallet
       }
 
       console.log('🧪 Starting Multi-Agent Orchestrator Test')
@@ -730,6 +785,7 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
           console.log(`   📊 Confidence: ${(result.consensus.confidence * 100).toFixed(1)}%`)
           console.log(`   🔄 Rounds: ${result.progress.currentRound}`)
           console.log(`   📈 Variance: ${result.consensus.variance.toFixed(3)}`)
+          console.log('\n💬 Feedback: You can now submit feedback for the judges at /api/feedback')
         })
         .catch((error) => {
           console.error('❌ Evaluation failed:', error)
@@ -740,13 +796,81 @@ export default async function orchestratorRoutes(fastify: FastifyInstance) {
           }
         })
 
-      return reply.status(202).send({
+      // Generate feedback auth for the user
+      let feedbackAuths: any[] = []
+
+      if (userWalletAddress) {
+        // Validate EVM address format
+        if (!/^0x[a-fA-F0-9]{40}$/.test(userWalletAddress)) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Invalid wallet address',
+            message: 'userWalletAddress must be a valid EVM address (0x...)'
+          })
+        }
+
+        const { getFeedbackAuthService } = await import('../../lib/feedback/feedback-auth.service.js')
+        const feedbackAuthService = getFeedbackAuthService()
+
+        console.log(`🔐 Generating feedback auth for user: ${userWalletAddress}`)
+
+        // Generate feedback auth for each agent
+        feedbackAuths = await Promise.all(
+          dbAgents.map(async (agent) => {
+            const auth = await feedbackAuthService.generateFeedbackAuth({
+              agentId: agent.id,
+              clientAddress: userWalletAddress,
+              indexLimit: 100,
+              expirySeconds: 3600, // 1 hour
+            })
+
+            return {
+              id: `auth_${Date.now()}_${agent.id}`,
+              agentId: agent.id.toString(),
+              agentName: agent.name,
+              clientAddress: auth.clientAddress,
+              feedbackAuth: auth.feedbackAuth, // Encoded bytes for on-chain
+              issuedAt: new Date().toISOString(),
+              expiresAt: new Date(Number(auth.expiry) * 1000).toISOString(),
+              indexLimit: Number(auth.indexTo),
+              chainId: auth.chainId.toString(),
+              identityRegistry: auth.identityRegistry,
+              signerAddress: auth.signerAddress,
+              signature: auth.signature,
+            }
+          })
+        )
+
+        console.log(`✅ Generated ${feedbackAuths.length} feedback auth tokens`)
+      }
+
+      const response: any = {
         success: true,
         evaluationId,
         topicId,
         status: 'started',
-        message: 'Multi-agent orchestrator test started successfully. Use /orchestrator/progress/:evaluationId to check progress.'
-      })
+        message: 'Multi-agent orchestrator test started successfully. Use /orchestrator/progress/:evaluationId to check progress.',
+      }
+
+      // Only include feedback info if user provided wallet address
+      if (userWalletAddress && feedbackAuths.length > 0) {
+        response.feedback = {
+          message: 'After evaluation completes, you can submit feedback for judges using the provided auth tokens',
+          submitEndpoint: 'Direct submission via blockchain (use frontend with viem)',
+          getReputationEndpoint: `/api/feedback/:agentId`,
+          userWalletAddress,
+          feedbackAuths,
+        }
+      } else if (!userWalletAddress) {
+        response.feedback = {
+          message: 'To enable feedback submission, provide userWalletAddress in the request',
+          example: {
+            userWalletAddress: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7'
+          }
+        }
+      }
+
+      return reply.status(202).send(response)
 
     } catch (error: any) {
       console.error('❌ Multi-Agent Orchestrator Test Failed:', error)

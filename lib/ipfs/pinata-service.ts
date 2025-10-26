@@ -3,22 +3,26 @@
  * Handles uploading agent metadata to IPFS via Pinata REST API
  */
 
+/**
+ * EIP-8004 compliant Agent Metadata
+ * https://eips.ethereum.org/EIPS/eip-8004#registration-v1
+ */
 export interface AgentMetadata {
-  type: string
+  type: string // MUST be "https://eips.ethereum.org/EIPS/eip-8004#registration-v1"
   name: string
-  description?: string
+  description: string
   image?: string
-  endpoints?: Array<{
-    name: string
+  endpoints: Array<{
+    name: string // e.g., "A2A", "MCP", "OASF", "ENS", "DID", "agentWallet"
     endpoint: string
     version?: string
     capabilities?: any
   }>
-  registrations?: Array<{
-    agentId?: number
-    agentRegistry: string
+  registrations: Array<{
+    agentId: number
+    agentRegistry: string // Format: eip155:{chainId}:{contractAddress}
   }>
-  supportedTrust?: string[]
+  supportedTrust: string[] // e.g., ["reputation", "crypto-economic", "tee-attestation"]
 }
 
 export class PinataService {

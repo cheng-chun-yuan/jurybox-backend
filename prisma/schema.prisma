@@ -108,7 +108,7 @@ model Judge {
   price                 Float    // HBAR per judgment
   specialties           String   // JSON array stored as string
   color                 String   // 'purple' | 'cyan' | 'gold'
-  avatar                String   // URL to avatar image
+  avatar                String?  // URL to avatar image
   trending              Boolean  @default(false)
   bio                   String
   expertise             String   // JSON array stored as string
@@ -174,5 +174,27 @@ model AAWallet {
   orchestrator          Orchestrator @relation(fields: [orchestratorId], references: [id])
 
   @@map("aa_wallets")
+}
+
+model FeedbackAuthRecord {
+  id                String   @id
+  agentId           String
+  clientAddress     String
+  feedbackAuth      String   // Encoded bytes for on-chain submission
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+  indexLimit        Int
+  used              Boolean  @default(false)
+
+  // Additional fields for tracking
+  chainId           String
+  identityRegistry  String
+  signerAddress     String
+  signature         String
+
+  @@unique([agentId, clientAddress, used])
+  @@index([clientAddress])
+  @@index([expiresAt])
+  @@map("feedback_auth_records")
 }
 
