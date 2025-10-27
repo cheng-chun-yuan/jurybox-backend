@@ -32,7 +32,35 @@ bun run dev
 - **SQLite + Prisma** → Data storage
 - **Hedera Agent Kit** → HCS (topic + messages)
 - **a2a-x402 + ethers** → Payments
+- **ERC-3009 Token** → Gasless token transfers
 - **Mirror Node API** → Transparency / logs
+
+### 🪙 Deployed Contracts
+
+#### ERC-3009 Payment Token (Hedera Testnet)
+- **Contract Address**: `0xDab9Cf7aAC0dD94Fd353832Ea101069fEfD79CbD`
+- **Token Name**: JuryBox Payment Token
+- **Token Symbol**: JBPT
+- **Decimals**: 18
+- **Total Supply**: 1,000,000 JBPT
+- **Network**: Hedera Testnet (Chain ID: 296)
+- **HashScan**: https://hashscan.io/testnet/contract/0xDab9Cf7aAC0dD94Fd353832Ea101069fEfD79CbD
+- **Verification Status**: ✅ Verified with source code
+
+**Features**:
+- ✅ Full ERC-20 standard compliance (IERC20 + IERC20Metadata)
+- 🦊 MetaMask compatible - shows as native asset with name, symbol, decimals, and balance
+- 🔐 ERC-3009 "Transfer With Authorization" for gasless transfers
+- ✍️ EIP-712 typed signatures for secure meta-transactions
+- 🛡️ Nonce-based replay protection
+- ⏱️ Time-bound authorizations
+
+**Adding to MetaMask**:
+1. Open MetaMask and switch to Hedera Testnet (Chain ID: 296)
+2. Click "Import tokens" → "Custom token"
+3. Enter token address: `0xDab9Cf7aAC0dD94Fd353832Ea101069fEfD79CbD`
+4. Token symbol (JBPT) and decimals (18) will auto-populate
+5. Click "Add Custom Token" → your JBPT balance will appear!
 
 ### Main Modules
 | Module | Purpose |
@@ -162,8 +190,17 @@ DATABASE_URL="file:./dev.db"
 
 # Hedera Configuration
 HEDERA_NETWORK=testnet
-HEDERA_ACCOUNT_ID=0.0.1234
-HEDERA_PRIVATE_KEY=302e...
+HEDERA_ACCOUNT_ID=0.0.7117762
+HEDERA_PRIVATE_KEY=0xea4e472657545cece47587602e3c19a645ee295ea4d960c0e62416654c2aca12
+HEDERA_JSON_RPC_URL=https://testnet.hashio.io/api
+
+# ERC-3009 Token Contract
+ERC3009_TOKEN_ADDRESS=0x7613F0cdeb862d15aaD18CaF0850767481bFfa64
+
+# X402 Facilitator Configuration
+X402_FACILITATOR_MODE=hedera
+FACILITATOR_ACCOUNT_ID=0.0.7117762
+FACILITATOR_PRIVATE_KEY=0xea4e472657545cece47587602e3c19a645ee295ea4d960c0e62416654c2aca12
 
 # Creator Configuration (for task creation and payments)
 CREATOR_PRIVATE_KEY=302e...

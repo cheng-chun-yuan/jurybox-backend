@@ -1,0 +1,15 @@
+# Build artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Metadata
+metadata.json
+
+# Dependencies
+node_modules/
+bun.lockb
+
+# Environment
+.env
+.env.local
